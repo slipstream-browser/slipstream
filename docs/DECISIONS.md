@@ -49,7 +49,7 @@ proof from the pinned tree). Highlights:
 | Network time (C3) | Google time-service queries off; skewed-clock users see generic cert errors (FAQ entry). Idle-capture bar now includes `clients2.google.com/time`. |
 | HTTPS-First | Balanced auto-enable (user pref always wins). |
 | App-Bound Encryption | Pursued via targeted revert of Thorium's elevation-service guards + our fresh GUIDs + system-level install default. Gated on investigating why Thorium disabled it. Per-user/portable installs stay DPAPI — documented. |
-| Default search engine | **PENDING — Matt's call before v0.1** (keep Google / seed DuckDuckGo via initial_preferences / choice screen). |
+| Default search engine | **DuckDuckGo** (decided 2026-08-30), seeded via initial_preferences — cheap, reversible, consistent with privacy-first identity. Users switch in two clicks; choice screen re-evaluated at v1.0. |
 
 ## GUID registry (PERMANENT after first public release)
 
