@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="stream" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2F7DFF"/>
+      <stop offset="1" stop-color="#00C8FF"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#00C8FF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#00C8FF" stop-opacity="0.85"/>
+    </linearGradient>
+    <linearGradient id="trail2" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#2F7DFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#2F7DFF" stop-opacity="0.85"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- ground -->
+  <rect x="0" y="0" width="256" height="256" rx="40" fill="#0B0E14"/>
+  <rect x="1.5" y="1.5" width="253" height="253" rx="38.5" fill="none"
+        stroke="#1B2230" stroke-width="3"/>
+
+  <!-- speed trails (hidden at tiny sizes; see THEME.md) -->
+  <g id="trails">
+    <rect x="150" y="55" width="82" height="7" fill="url(#trail)"/>
+    <rect x="170" y="121" width="62" height="7" fill="url(#trail)"/>
+    <rect x="24"  y="128" width="62" height="7" fill="url(#trail2)"/>
+    <rect x="24"  y="194" width="82" height="7" fill="url(#trail2)"/>
+  </g>
+
+  <!-- angular S mark -->
+  <g id="mark" filter="url(#glow)">
+    <path d="M 196 58
+             L 100 58
+             L 68 90
+             L 100 122
+             L 156 122
+             L 188 158
+             L 156 190
+             L 60 190
+             L 60 158
+             L 142 158
+             L 130 146
+             L 88 146
+             L 36 94
+             L 88 26
+             L 196 26
+             Z"
+          fill="none"/>
+    <path d="M 196 60 H 106 L 74 92 L 106 124 H 150 L 182 156 L 150 188 H 60"
+          fill="none" stroke="url(#stream)" stroke-width="34"
+          stroke-linecap="square" stroke-linejoin="miter"/>
+  </g>
+</svg>

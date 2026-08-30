@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Chromium engine bug (rendering, crashes, web platform)
+    url: https://issues.chromium.org/issues/new
+    about: Bugs deep in Blink/V8/Chromium belong upstream — we inherit their fixes.
+  - name: Thorium patch behavior
+    url: https://github.com/Alex313031/thorium/issues
+    about: Behavior coming from Thorium's optimization/UI patches.
+  - name: Security vulnerability (private)
+    url: https://github.com/slipstream-browser/slipstream/security/advisories/new
+    about: Never report security issues in public — use private reporting.

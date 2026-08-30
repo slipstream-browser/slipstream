@@ -1,0 +1,22 @@
+name: Feature request
+description: Propose a change to Slipstream's defaults, patches, or tooling
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read [PILLARS.md](../../blob/main/docs/PILLARS.md) non-goals first — fingerprint
+        farbling, Sync revival, and anything breaking Chrome Web Store compatibility
+        are declined by policy. Every patch is rebase debt; GN args and prefs beat patches.
+  - type: textarea
+    id: what
+    attributes:
+      label: What should change, and why
+      placeholder: Which pillar does it serve (fast / memory / privacy / secure)? What's the mechanism (GN arg, pref, feature flip, patch)?
+    validations:
+      required: true
+  - type: textarea
+    id: cost
+    attributes:
+      label: What does it cost
+      placeholder: Speed? Memory? Web compat? Rebase burden? Who is affected?

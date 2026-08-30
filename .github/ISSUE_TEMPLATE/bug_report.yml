@@ -1,0 +1,39 @@
+name: Bug report
+description: Something in Slipstream Browser itself is broken
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: engine bugs (rendering, crashes on specific sites, web APIs)
+        belong at [issues.chromium.org](https://issues.chromium.org) — we inherit fixes.
+        File here for: install/uninstall, our defaults/patches, extension-store
+        integration, packaging, update checking, telemetry claims.
+  - type: input
+    id: version
+    attributes:
+      label: Slipstream version + Chromium base
+      placeholder: "0.1.0 — Chromium 152.0.7977.55 (chrome://version)"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install type
+      options: [Installer (system), Installer (per-user), Portable zip, Self-built]
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: What happened, and how to reproduce it
+      placeholder: Steps, expected vs actual. Does stock Chrome/Thorium do the same?
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: Reproduces in a fresh profile (--user-data-dir to an empty folder)
+        - label: Does NOT reproduce in Chrome/Chromium (i.e., it's ours, not upstream)
