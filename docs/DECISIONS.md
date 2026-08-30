@@ -21,7 +21,7 @@ dated entry, not an edit.
 | CPU target | AVX2 (`thorium_x86_profile = "avx2_fma"`) only, for distribution | Haswell/Zen1+ floor, matches Thorium's main channel. AVX-512 gets one benchmark experiment, not a maintained channel (PGO profile is generic; community-measured gains are low single digits; each channel doubles build time). |
 | Sync | Not available, documented in FAQ | Google closed the Sync API to third-party Chromium builds in March 2021. No key brings it back. |
 | MV2 | Keep Thorium's `allow_manifest_v2_extensions` runtime patch | Sideloaded/preinstalled MV2 (uBO classic) keeps working; CWS no longer serves MV2 — documented so it isn't filed as a Slipstream bug. |
-| Repo visibility | **Public from day one** (Matt, 2026-08-30) — live at github.com/mcatsim/slipstream-browser; transfer to the slipstream-browser org once Matt creates it (org creation has no API). |
+| Repo visibility | **Public from day one** (Matt, 2026-08-30) — live at github.com/mcatsim/slipstream-browser | Transfer to the slipstream-browser org once Matt creates it (org creation has no API). Domains slipstreambrowser.com + slipstream-browser.com purchased by Matt 2026-08-30. |
 | Chromium checkout | Full history (not `--no-history`) | Deviation from the original plan: tag checkouts and 2-week rebase cadence need tag fetches, which fight shallow clones. Disk (1.27 TB free) is not the constraint. |
 
 ## 2026-08-30 — v0.0 gate results
