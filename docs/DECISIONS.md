@@ -24,6 +24,14 @@ dated entry, not an edit.
 | Repo visibility | Private until v0.1 ships, then public | Nothing public until a release exists and licensing files are complete. |
 | Chromium checkout | Full history (not `--no-history`) | Deviation from the original plan: tag checkouts and 2-week rebase cadence need tag fetches, which fight shallow clones. Disk (1.27 TB free) is not the constraint. |
 
+## 2026-08-30 — v0.0 gate results
+
+| Finding | Consequence |
+|---|---|
+| Stock Thorium build green on first attempt (4.5 h, `-j 22`, peak RAM fine with 96 GB pagefile) | Toolchain proven; SDK 26100 passed M152's checks (28000 installed anyway for future milestones). |
+| CWS serves the browser normally; uBO Lite installed by hand; **uBO classic auto-preinstalled from CWS on new profile** (verified in test profile) | Keep Thorium's `preinstall-ublock-origin.patch`. Google's CRX service still serves the delisted MV2 package (2026-08-30). Fallback if that ever stops: swap the ID to uBO Lite (`ddkjiahejlhfcafbddmgiahcphecmpfh`). Nothing is bundled in the installer → no GPL redistribution obligations. |
+| **Chromium's own hard-coded preinstall list also installed an Adobe Acrobat extension** (`efaidnbmnnnibpcajpcglclefindmkaj`) in the test profile | Bloat. New stage-90 patch planned: `90-trim-preinstalled-extensions.patch` — clear Chromium's partner preinstalls, keep only uBO. |
+
 ## GUID registry (PERMANENT after first public release)
 
 See `branding/brand.json`. Six fresh GUIDs generated 2026-08-30; reusing

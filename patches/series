@@ -12,3 +12,4 @@
 #   patches/90-disable-optimization-guide-fetch.patch
 #   patches/90-remove-promo-surfaces.patch
 #   patches/90-default-prefs-hardening.patch
+#   patches/90-trim-preinstalled-extensions.patch  (keep uBO, drop Adobe/partner preinstalls)
