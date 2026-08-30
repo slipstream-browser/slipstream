@@ -54,8 +54,14 @@ def protect(text: str, identifiers: list[str]):
     return text, restore
 
 
-def replace_lower(text: str, old: str, new: str) -> str:
-    """Replace lowercase token only where it isn't a code identifier/filename."""
+def replace_protected(text: str, old: str, new: str) -> str:
+    """Replace a token only where it is NOT part of a code identifier, path
+    segment, or file reference. Applied to every casing (Thorium/THORIUM/
+    thorium) so that compound identifiers -- especially underscore-glued
+    buildflag macros like IS_DESKTOP_ANDROID_THORIUM and GN vars like
+    thorium_x86_profile -- survive untouched. Renaming those inside our
+    allowlist (build/, chrome/) while their twins in base/, net/, v8/ etc.
+    stay 'thorium' is exactly what breaks the build."""
     out = []
     idx = 0
     n = len(text)
@@ -68,16 +74,23 @@ def replace_lower(text: str, old: str, new: str) -> str:
         end = j + len(old)
         before = text[j - 1] if j > 0 else ""
         after = text[end] if end < n else ""
-        # Keep lowercase "thorium" when it is part of a code identifier
-        # (glued to _), a path segment (adjacent to a / or \ separator), or a
-        # file reference (followed by a known source/asset suffix). Renaming
-        # any of those without also renaming the real file/dir/symbol breaks
-        # the build — e.g. the `components/vector_icons/thorium/` icon dir,
-        # which is referenced by path in BUILD.gn but never actually renamed.
-        glued_ident = before == "_" or after == "_"
+        # Replace ONLY standalone-word occurrences: the token must not be
+        # adjacent to an identifier character (letter/digit/underscore) on
+        # either side, nor sit in a path segment or file reference. This keeps
+        # every code identifier intact regardless of casing --
+        # camelCase (kThoriumUIScheme), snake_case (thorium_x86_profile), and
+        # macros (IS_DESKTOP_ANDROID_THORIUM) -- which is essential because
+        # those symbols are defined in dirs OUTSIDE our allowlist (base/, net/,
+        # content/) and referenced inside it; renaming only one side breaks the
+        # build. Users only ever see strings/UI text/the product & exe name,
+        # all of which ARE standalone words and still get renamed.
+        def is_ident(c: str) -> bool:
+            return c.isalnum() or c == "_"
+
+        in_identifier = is_ident(before) or is_ident(after)
         path_seg = before in "/\\" or after in "/\\"
         is_src_ref = bool(SRC_FILE_SUFFIX.match(text[end : end + 5]))
-        if glued_ident or path_seg or is_src_ref:
+        if in_identifier or path_seg or is_src_ref:
             out.append(old)  # identifier, path segment, or file reference — keep
         else:
             out.append(new)
@@ -120,10 +133,7 @@ def main() -> int:
             orig = text
             text, restore = protect(text, preserve)
             for old, new in tokens:
-                if old.islower():
-                    text = replace_lower(text, old, new)
-                else:
-                    text = text.replace(old, new)
+                text = replace_protected(text, old, new)
             for ph, ident in restore.items():
                 text = text.replace(ph, ident)
             if text != orig:
