@@ -32,6 +32,25 @@ dated entry, not an edit.
 | CWS serves the browser normally; uBO Lite installed by hand; **uBO classic auto-preinstalled from CWS on new profile** (verified in test profile) | Keep Thorium's `preinstall-ublock-origin.patch`. Google's CRX service still serves the delisted MV2 package (2026-08-30). Fallback if that ever stops: swap the ID to uBO Lite (`ddkjiahejlhfcafbddmgiahcphecmpfh`). Nothing is bundled in the installer → no GPL redistribution obligations. |
 | **Chromium's own hard-coded preinstall list also installed an Adobe Acrobat extension** (`efaidnbmnnnibpcajpcglclefindmkaj`) in the test profile | Bloat. New stage-90 patch planned: `90-trim-preinstalled-extensions.patch` — clear Chromium's partner preinstalls, keep only uBO. |
 
+## 2026-08-30 — pillar design (memory / privacy / security)
+
+Product pillars set by Matt: **fast, memory-optimized, privacy-first, secure.**
+Priority when irreconcilable: **SECURE > PRIVACY > FAST > MEMORY.**
+
+Full machine-verified design: `docs/PILLARS.md` (implementation plan) +
+`docs/pillar-proposals.json` (evidence record; every item carries file:line
+proof from the pinned tree). Highlights:
+
+| Decision | Choice |
+|---|---|
+| Memory strategy | Discard/freeze stack (Memory Saver default-ON, commit-limit discard, freeze+purge), NOT weakened protections. Site isolation, BackupRefPtr, spare renderer all kept — costs documented. |
+| Three more Thorium patches excluded | `windows-thorium-flags-conf` (user-writable flag injection), `relax-bad-flags-warning`, `ftp-support-thorium`. |
+| **Invariant (C2)** | `enable_mdns=false` is only valid while `webrtc.ip_handling_policy=default_public_interface_only` ships in the same build. Revert one ⇒ revert both, same commit. ICE-leak check is a release gate. |
+| Network time (C3) | Google time-service queries off; skewed-clock users see generic cert errors (FAQ entry). Idle-capture bar now includes `clients2.google.com/time`. |
+| HTTPS-First | Balanced auto-enable (user pref always wins). |
+| App-Bound Encryption | Pursued via targeted revert of Thorium's elevation-service guards + our fresh GUIDs + system-level install default. Gated on investigating why Thorium disabled it. Per-user/portable installs stay DPAPI — documented. |
+| Default search engine | **PENDING — Matt's call before v0.1** (keep Google / seed DuckDuckGo via initial_preferences / choice screen). |
+
 ## GUID registry (PERMANENT after first public release)
 
 See `branding/brand.json`. Six fresh GUIDs generated 2026-08-30; reusing

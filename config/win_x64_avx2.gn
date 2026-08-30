@@ -76,4 +76,19 @@ chrome_pgo_phase = 2
 enable_background_mode = false
 enable_background_contents = false
 enable_service_discovery = false
+
+# INVARIANT (docs/PILLARS.md C2): enable_mdns=false compiles out the mDNS
+# responder that conceals local IPs in WebRTC ICE candidates. It is only
+# valid while the webrtc.ip_handling_policy=default_public_interface_only
+# default (PRIV-02, 90-default-prefs-hardening.patch) ships in the same
+# build. Revert PRIV-02 => revert this to true in the same commit.
 enable_mdns = false
+
+# [SLIP] pillar pins (docs/PILLARS.md section A) — assert-pins: these are
+# already the defaults for this config; pinning makes drift a gen-time error.
+v8_enable_pointer_compression = true   # MEM-07 (v8/BUILD.gn)
+v8_enable_sandbox = true               # SEC-V8SBX-11
+enable_backup_ref_ptr_support = true   # MEM-08: security kept over ~memory cost
+
+# MEM-09 — gated: requires trial build + CWS smoke green, else defer to v0.2
+use_on_device_model_service = false

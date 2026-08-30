@@ -1,0 +1,782 @@
+[
+  {
+    "dimension": "memory",
+    "non_goals": [
+      "V8 lite mode / jitless / heap-size clamps: hard constraint 2 — materially hurts JS speed; V8 defaults are PGO-tuned and stay untouched.",
+      "Windows working-set trimming (EmptyWorkingSet on freeze): no mechanism exists at this pin — WorkingSetTrimmer::GetInstance() returns a NoOp on non-ChromeOS (chrome/browser/performance_manager/mechanisms/working_set_trimmer.cc:32-39); building one is an invasive patch for a benefit Windows' own memory manager mostly provides.",
+      "Disabling the warm spare renderer (kSpareRendererForSitePerProcess, content_features.cc:1150): saves ~one idle renderer but slows every cross-site navigation — FAST pillar wins.",
+      "Shrinking Blink's strong memory cache (kMemoryCacheStrongReference, 200MB threshold on Windows, blink features.cc:1733-1751): deliberate memory-for-speed cache; cutting it degrades reload/back-nav; pressure-driven purge (MEM-04) already reclaims it when it matters.",
+      "Disabling BackupRefPtr/MiraclePtr to reclaim allocator overhead: SECURE pillar wins; cost documented instead (MEM-08).",
+      "--process-per-site as default: crash blast radius, poor discard granularity, and upstream's bounded same-site reuse already ships enabled — opt-in only (MEM-10).",
+      "V8 GC parameter fiddling (kV8MemoryReducer / kV8MemoryReducerDelay / kV8ScavengerHigherCapacity, gin/gin_features.cc:88-109): unmeasured speed-vs-memory effects, no upstream launch signal; not worth solo-maintainer benchmark burden.",
+      "Reducing back/forward cache entries: directly hurts back-navigation speed (FAST); bfcache pages already freeze and are purged/evicted under pressure.",
+      "Lowering the renderer process limit (--renderer-process-limit): degrades isolation and causes cross-site process sharing jank; the freeze/discard stack (MEM-01..05) is the correct pressure valve.",
+      "Brave-style fingerprint farbling and other large privacy patch series: out of scope per constraint 3 (rebase budget) and not a memory lever."
+    ],
+    "proposals": [
+      {
+        "id": "MEM-01",
+        "title": "Memory Saver ON by default (medium aggressiveness)",
+        "mechanism": "default_pref",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\performance_manager\\user_tuning\\prefs.cc",
+          "D:\\src\\chromium\\src\\components\\performance_manager\\public\\user_tuning\\prefs.h",
+          "D:\\src\\chromium\\src\\chrome\\browser\\performance_manager\\policies\\memory_saver_mode_policy.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\resources\\settings\\performance_page\\memory_page.html"
+        ],
+        "change": "Two-line stage-90 patch in RegisterLocalStatePrefs (components/performance_manager/user_tuning/prefs.cc:34-35): register kMemorySaverModeState default as MemorySaverModeState::kEnabled (2) instead of kDisabled (0). Leave kMemorySaverModeAggressiveness at its registered kMedium default (memory_saver_mode_policy.cc:201-224: discard after 4h backgrounded, max 15 revisits). Fold into patches/90-default-prefs-hardening.patch or a new 90-memory-defaults.patch.",
+        "benefit": "Background tabs older than 4h are proactively discarded, freeing entire renderer processes (typically 100-400MB each on heavy sites). This is Chrome's shipped, battle-tested Memory Saver; Google enables it for many users via Finch, which Slipstream never receives — so the code default is the only default. Migration code (prefs.cc:129-155) only overwrites the default when the user explicitly set the old pref, so the flip is safe. DiscardEligibilityPolicy protections (audio, form input, capture, exceptions list) all apply; discard ring treatment (kDiscardRingTreatmentEnabled, default true) makes discards visible.",
+        "risks": "Discarded tabs reload on focus (state kept via session restore, but scroll/JS state loss possible on badly-behaved pages). Users can disable or add site exceptions at chrome://settings/performance. Registered-default flip means enterprise MemorySaverModeSavings policy still overrides cleanly.",
+        "cws_impact": "None. No UA, extension pipeline, or webstorePrivate surface touched.",
+        "pillar_conflicts": "None; supports FAST (fewer live renderers competing for CPU).",
+        "verdict": {
+          "id": "MEM-01",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/performance_manager/user_tuning/prefs.cc:34-35 registers kMemorySaverModeState default kDisabled; :36-38 kMemorySaverModeAggressiveness default kMedium; :43 kDiscardRingTreatmentEnabled default true; migration at :129-155 and :157-168 only acts when the OLD pref was explicitly set. memory_saver_mode_policy.cc:206-207 kMedium=4h, :218-219 max 15 revisits. chrome/browser/resources/settings/performance_page/memory_page.html exists.",
+          "notes": "Fully confirmed, including the exact aggressiveness numbers (6h/4h/2h, revisits 5/15/15). Enterprise override claim verified: key::kMemorySaverModeSavings is wired at chrome/browser/policy/configuration_policy_handler_list_factory.cc:2771. Migration logic is safe with a flipped registered default: MigrateMemorySaverModePref only writes when the old bool pref is non-default, so a user who explicitly disabled it in an older build stays disabled. No Thorium/Slipstream duplication (planned 90-default-prefs-hardening covers prefetch/suggest/DoH/UKM only). Could not refute."
+        }
+      },
+      {
+        "id": "MEM-02",
+        "title": "Enable commit-limit tab discarding on Windows (kDiscardOnCommitLimit)",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\performance_manager\\features.cc",
+          "D:\\src\\chromium\\src\\components\\performance_manager\\public\\features.h",
+          "D:\\src\\chromium\\src\\chrome\\browser\\performance_manager\\policies\\urgent_page_discarding_policy.cc"
+        ],
+        "change": "Stage-90 patch: components/performance_manager/features.cc:250 — flip kDiscardOnCommitLimit from FEATURE_DISABLED_BY_DEFAULT to FEATURE_ENABLED_BY_DEFAULT. Keep the 10% min_available_percent param default (features.cc:252-256).",
+        "benefit": "Windows-specific implementation fully present at this pin (urgent_page_discarding_policy.cc:62-67 registers AvailableMemoryMonitor, :149-167 discards least-important tab when available commit < 10% of the commit limit). Prevents the classic Windows failure mode of pagefile thrash and aw-snap OOM kills on machines with small/fixed pagefiles — commit exhaustion happens well before physical-RAM pressure signals fire. Complements, and on Windows supersedes, plain pressure-signal urgent discarding (kUrgentPageDiscarding, already enabled, features.cc:176).",
+        "risks": "Low: only acts under genuine commit scarcity; discards via the same eligibility-protected pipeline as Memory Saver. Feature is pre-launch upstream (Finch-gated), so soak-test in v0.1 nightly before tagging.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "MEM-02",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/performance_manager/features.cc:250 BASE_FEATURE(kDiscardOnCommitLimit, FEATURE_DISABLED_BY_DEFAULT); :252-256 min_available_percent=10. urgent_page_discarding_policy.cc:62-67 (#if BUILDFLAG(IS_WIN), AvailableMemoryMonitor::Get()); :149-167 OnAvailableMemoryUpdated discards when available_commit/total_commit < threshold; :139-144 commit path supersedes pressure path when monitor_ set.",
+          "notes": "Confirmed end to end. Adversarial check on the hidden dependency passed: base/memory/available_memory_monitor.cc:21-36 is a self-contained NoDestructor singleton that starts polling only when the first observer is added, so the feature flip alone activates it. Only hidden cost found: a 2-second GlobalMemoryStatusEx poll (available_memory_monitor.cc:17) in the browser process — negligible. Note kSustainedPMUrgentDiscarding's sustained-pressure path (:169-174) still fires alongside; harmless. Pre-launch/Finch-gated status confirmed by the disabled default — proposal's soak-test caveat is appropriate."
+        }
+      },
+      {
+        "id": "MEM-03",
+        "title": "Enable freeze-on-memory-pressure on Windows (kInfiniteTabsFreezingOnMemoryPressure)",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\performance_manager\\features.cc",
+          "D:\\src\\chromium\\src\\components\\performance_manager\\freezing\\freezing_policy.cc",
+          "D:\\src\\chromium\\src\\components\\performance_manager\\public\\freezing\\cannot_freeze_reason.h"
+        ],
+        "change": "Stage-90 patch: components/performance_manager/features.cc:235-236 — flip kInfiniteTabsFreezingOnMemoryPressure to enabled. Keep param defaults (5s check interval, freeze when available physical memory < 15%; features.cc:238-248).",
+        "benefit": "Windows-only path in freezing_policy.cc:263-271 and :1422-1435 starts a timer that freezes eligible background tabs when available physical memory drops below 15%. Frozen tabs stop JS timers and GC churn, and (with MEM-04) purge their heaps — a gentler first line of defense before discarding. Eligibility respects the full CannotFreezeReason set (cannot_freeze_reason.h:17-43: audible, WebRTC, USB/BT/HID/serial, capture, notification permission, weblocks, WebUI), so media/chat/dev workflows are protected.",
+        "risks": "Freezing pauses pages that lack notification permission — a background web app polling without notifications may miss updates until refocused. Pressure-triggered only, so exposure is limited to low-memory situations where the alternative is discard or swap-thrash.",
+        "cws_impact": "None. Extension pages/service workers are not tab PageNodes subject to this policy.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "MEM-03",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/performance_manager/features.cc:235-236 kInfiniteTabsFreezingOnMemoryPressure disabled by default; :238-248 params 5s/15%. freezing_policy.cc:263-271 Windows-only timer; :1422-1458 CheckMemoryPressureForFreezing uses available physical %; :470-476 freezes FreezingType::kInfiniteTabs-eligible pages while is_under_memory_pressure_. cannot_freeze_reason.h:17-43 full protection enum as described.",
+          "notes": "Confirmed. One precision the proposal omits: the pressure variant shares the kInfiniteTabs freezing type, so the kInfiniteTabsFreezing_NumProtectedTabs param (default 5 MRU tabs, freezing_policy.cc:1222,1250) and the periodic-unfreeze exemption (:472 !is_in_periodic_unfreeze) also apply — strictly more conservative than described, so the benefit case survives. Risk framing (background pages without notification permission pausing) matches kNotificationPermission at cannot_freeze_reason.h:38. Could not refute."
+        }
+      },
+      {
+        "id": "MEM-04",
+        "title": "Enable renderer memory purge when pages freeze (kMemoryPurgeOnFreeze)",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\third_party\\blink\\common\\features.cc",
+          "D:\\src\\chromium\\src\\third_party\\blink\\renderer\\platform\\scheduler\\main_thread\\memory_purge_manager.cc",
+          "D:\\src\\chromium\\src\\third_party\\blink\\renderer\\platform\\scheduler\\main_thread\\memory_purge_manager.h"
+        ],
+        "change": "Stage-90 patch: third_party/blink/common/features.cc:1764-1770 — make kMemoryPurgeOnFreeze FEATURE_ENABLED_BY_DEFAULT on desktop (currently Android-only). Leave kMemoryPurgeOnFreezeLimit (features.cc:1772) alone.",
+        "benefit": "When a page freezes (battery saver freezing, MEM-03 pressure freezing, bfcache), the renderer simulates critical memory pressure and drops V8 heap, Blink caches, and font/image caches (memory_purge_manager.cc:165-185). Ships enabled on Android, where memory purging is proven; on desktop only the 4-minute post-backgrounding purge runs today (kPurgeOnBackgroundingEnabled=true, memory_purge_manager.h:77-83). Makes every freeze event also a reclaim event — freezing alone stops growth but frees nothing.",
+        "risks": "Very low: purge only fires on freeze, which only happens to protected-eligibility pages; a one-off CPU spike per freeze for the GC pass. Unfrozen pages rebuild caches lazily (slightly slower first interaction after long absence).",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Negligible FAST cost, paid only by frozen background tabs.",
+        "verdict": {
+          "id": "MEM-04",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "third_party/blink/common/features.cc:1764-1770 kMemoryPurgeOnFreeze ENABLED on Android, DISABLED elsewhere; :1772 kMemoryPurgeOnFreezeLimit separate. memory_purge_manager.cc:76-88 OnPageFrozen triggers purge; :163-185 PerformMemoryPurge simulates MEMORY_PRESSURE_LEVEL_CRITICAL unless the feature is off; memory_purge_manager.h:77-83 kPurgeOnBackgroundingEnabled true on desktop, :87-88 4-minute default.",
+          "notes": "All citations verified nearly line-exact. Two small caveats found, neither disqualifying: (1) CanPurge (memory_purge_manager.cc:201-215) requires the renderer to be backgrounded, so a freeze in a foregrounded-but-occluded renderer won't purge — slightly narrower benefit than stated; (2) the purge also fires on bfcache freezes, so back-navigation restores pay a cache-rebuild cost. Mechanism is proven-in-production on Android and the flip is a 2-line patch. Keep."
+        }
+      },
+      {
+        "id": "MEM-05",
+        "title": "Enable infinite-tabs freezing (kInfiniteTabsFreezing) — v0.2 candidate behind soak gate",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\performance_manager\\features.cc",
+          "D:\\src\\chromium\\src\\components\\performance_manager\\public\\features.h",
+          "D:\\src\\chromium\\src\\components\\performance_manager\\freezing\\freezing_policy.cc"
+        ],
+        "change": "Stage-90 patch: components/performance_manager/features.cc:215 — flip kInfiniteTabsFreezing to enabled. Defaults: 5 most-recently-visible tabs protected, frozen tabs unfrozen 5s every 1min to let them refresh/show notifications (features.cc:217-233). Recommend landing DISABLED in v0.1, enabled in nightly, promoted to default at v0.2 after a soak period.",
+        "benefit": "The 'infinite tabs' policy: all eligible tabs beyond the 5 most recent are frozen continuously, not just under pressure — CPU and memory growth stop scaling with tab count. Combined with MEM-04, hoarded background tabs settle to purged, frozen minima. This is the flagship differentiator for a memory-optimized fork: upstream has the entire mechanism at this pin but keeps it Finch-gated.",
+        "risks": "Highest web-compat risk of the set: it freezes aggressively in normal operation, not just under pressure. The periodic unfreeze window plus the CannotFreezeReason protections mitigate, but pre-launch upstream status means Slipstream would be ahead of Google's rollout — hence the soak gate rather than direct-to-default.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Slight FAST tension: refocusing a long-frozen tab pays a wake-up cost (much smaller than a discard reload).",
+        "verdict": {
+          "id": "MEM-05",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/performance_manager/features.cc:215 kInfiniteTabsFreezing disabled by default; :217-233 params num_protected_tabs=5, unfreeze_interval=1min, unfreeze_duration=5s. freezing_policy.cc:465-469 continuous freezing branch; :1222,:1250 MRU protection wiring; :331 comment documenting the protected-tabs promise.",
+          "notes": "Confirmed exactly as proposed, including all three param defaults. The staged rollout plan (disabled in v0.1, nightly soak, default at v0.2) is the right call for the highest-web-compat-risk item and is what keeps this a keep rather than a drop: shipping it default-on day one ahead of Google's rollout would be hard to defend for a solo maintainer. CannotFreezeReason protections and the 5s/1min periodic unfreeze verified in code. No CWS interaction: extension background contexts are not tab PageNodes."
+        }
+      },
+      {
+        "id": "MEM-06",
+        "title": "Stop pinning the default-search-engine renderer resident (kKeepDefaultSearchEngineRendererAlive off)",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\performance_manager\\features.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\performance_manager\\chrome_browser_main_extra_parts_performance_manager.cc"
+        ],
+        "change": "Stage-90 patch: components/performance_manager/features.cc:267-273 — flip kKeepDefaultSearchEngineRendererAlive to FEATURE_DISABLED_BY_DEFAULT on desktop, which stops KeepAliveDSEPolicy from being installed (chrome_browser_main_extra_parts_performance_manager.cc:291-295).",
+        "benefit": "Upstream keeps the default search engine's renderer process alive indefinitely to shave latency off the next search navigation. That is one permanently-resident renderer (~50-150MB private) for a page the user may not visit for hours. Slipstream keeps the warm spare renderer (kSpareRendererForSitePerProcess, content_features.cc:1150, enabled), so a search navigation still lands in a pre-warmed process — the residual cost is site-specific initialization only.",
+        "risks": "First search-results navigation after the DSE process dies is marginally slower (tens of ms, masked by network time and the spare renderer). Honest FAST-vs-MEMORY tradeoff; document in DEBLOAT.md.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Small FAST cost on first DSE navigation; MEMORY and baseline-RAM win.",
+        "verdict": {
+          "id": "MEM-06",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/performance_manager/features.cc:267-273 kKeepDefaultSearchEngineRendererAlive ENABLED_BY_DEFAULT on non-Android. chrome_browser_main_extra_parts_performance_manager.cc:291-295 installs KeepAliveDSEPolicy only when the feature is enabled (keep_alive_dse_policy.cc/.h exist). Spare-renderer fallback confirmed: content_features.cc:1150 kSpareRendererForSitePerProcess FEATURE_ENABLED_BY_DEFAULT.",
+          "notes": "Confirmed; the disable path is clean (policy simply never installed). Attempted refutation via hidden dependents found none: KeepAliveDSEPolicy is a standalone graph policy, and search prefetch/prerender create processes on demand regardless. The FAST cost is honestly characterized (first DSE navigation after process death, masked by network + warm spare). Extra synergy the proposal missed: Slipstream's planned no-search-suggest default pref makes a hot DSE renderer even less valuable. Keep, and record in DEBLOAT.md as proposed."
+        }
+      },
+      {
+        "id": "MEM-07",
+        "title": "Pin and verify V8 pointer compression in the distribution config",
+        "mechanism": "gn_arg",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\v8\\gni\\v8.gni",
+          "D:\\src\\chromium\\src\\v8\\BUILD.gn",
+          "D:\\src\\slipstream\\config\\win_x64_avx2.gn"
+        ],
+        "change": "Add to config/win_x64_avx2.gn: v8_enable_pointer_compression = true (and comment that the shared cage + external code space + V8 sandbox follow from it, per v8/BUILD.gn:623-636). No behavior change — this is a pin. Add the arg to the per-release docs/gn_all_args.txt verification checklist.",
+        "benefit": "Confirms the single biggest V8 memory lever stays on: pointer compression defaults to true for x64 (v8/gni/v8.gni:347-351) and neither Thorium's win_AVX2_args.gn nor Slipstream's deltas touch it — verified at this pin. Publicly documented as ~40% V8 heap reduction with neutral-to-positive speed. Pinning it explicitly guards against silent Thorium/upstream churn on future tag bumps and makes the memory posture auditable.",
+        "risks": "None (assert-style pin; build fails loudly if upstream semantics change). Implies the 4GB shared-cage limit across same-process isolates — the shipped Chrome configuration.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "MEM-07",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "v8/gni/v8.gni:347-351: v8_enable_pointer_compression defaults true for x64. v8/BUILD.gn:632-634 shared cage inherits from it; :730-735 v8_enable_sandbox defaults from the shared cage; :846 asserts sandbox requires external code space. Grep of D:/src/slipstream/third_party/thorium/other/ (recursive, includes AVX2/win_AVX2_args.gn) and config/win_x64_avx2.gn: zero pointer-compression references.",
+          "notes": "Confirmed as a pure assert-style pin: on at the pin, untouched by Thorium and Slipstream. Citation correction: the sandbox/shared-cage derivation is at v8/BUILD.gn:632-634 and :730-735, not :623-636 (line 623 is a fuzzer-toolchain toggle, and :629-631 applies only under v8_multi_arch_build) — fix the comment before landing. Zero risk, guards against silent churn on tag bumps, supports the auditability story. Keep."
+        }
+      },
+      {
+        "id": "MEM-08",
+        "title": "Keep BackupRefPtr/MiraclePtr; document its memory cost honestly",
+        "mechanism": "gn_arg",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\base\\allocator\\partition_allocator\\partition_alloc.gni",
+          "D:\\src\\chromium\\src\\base\\allocator\\partition_alloc_features.cc"
+        ],
+        "change": "No functional change — record the decision: leave enable_backup_ref_ptr_support at its Windows default of true (partition_alloc.gni:265-269) and the runtime kPartitionAllocBackupRefPtr feature enabled (partition_alloc_features.cc:160-163). Add a DEBLOAT.md 'deliberately KEPT' entry stating the measured cost class (per-allocation metadata + quarantined slots; low-single-digit % of total memory per Google's public BRP experiments) and that Slipstream will not trade UAF exploit mitigation for it. Optionally pin the GN arg explicitly in win_x64_avx2.gn like MEM-07.",
+        "benefit": "Resolves the MEMORY-vs-SECURE conflict explicitly in SECURE's favor, with the cost on the record so it isn't re-litigated every release. Also documents the already-enabled PA hygiene baseline: kPartitionAllocMemoryReclaimer (partition_alloc_features.cc:308) and kPartitionAllocAdjustSizeWhenInForeground on Windows (:381-383) — no action needed, they ship on.",
+        "risks": "None (documentation of status quo).",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Accepts a small MEMORY cost for SECURE; explicitly recorded.",
+        "verdict": {
+          "id": "MEM-08",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "partition_alloc.gni:265-269 declares enable_backup_ref_ptr_support = use_partition_alloc && enable_backup_ref_ptr_support_default; the Windows-release-true derivation is in build_overrides/partition_alloc.gni:74-106 (shim default true; PA-E true when !is_debug && !is_component_build → BRP default true). partition_alloc_features.cc:160-166 kPartitionAllocBackupRefPtr ENABLED when ENABLE_BACKUP_REF_PTR_FEATURE_FLAG; :308 kPartitionAllocMemoryReclaimer enabled; :381-386 kPartitionAllocAdjustSizeWhenInForeground enabled on Windows.",
+          "notes": "Documentation-of-status-quo entry; all claims check out for Slipstream's exact config (win_x64_avx2.gn has is_debug=false, is_component_build=false, no sanitizers → BRP compiled in and runtime-enabled, all-processes mode per :181-184). Citation correction for the doc entry: 'Windows default of true' is established by build_overrides/partition_alloc.gni:74-106, not by partition_alloc.gni:265-269 alone (that block also warns the GN arg does not by itself enable protection — partitions opt in). Zero rebase cost, pre-resolves the MEMORY-vs-SECURE argument. Keep."
+        }
+      },
+      {
+        "id": "MEM-09",
+        "title": "Compile out the on-device AI model service (use_on_device_model_service=false)",
+        "mechanism": "gn_arg",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\services\\on_device_model\\on_device_model.gni",
+          "D:\\src\\chromium\\src\\components\\optimization_guide\\features.gni"
+        ],
+        "change": "Trial-build with use_on_device_model_service = false (services/on_device_model/on_device_model.gni:14-18, defaults true on Windows) and, if required by dependent targets, build_with_model_execution = false (components/optimization_guide/features.gni:50-53; gates chrome/browser/ai, history_embeddings, autofill/wallet model targets). Land only on a green build + CWS smoke test; otherwise defer to v0.2.",
+        "benefit": "Removes the on-device model host service and model-execution plumbing entirely. Since build_with_internal_optimization_guide is already false for non-Chrome-branded builds (features.gni:38-46), this code can never do useful work in Slipstream — it is pure resident-code and attack-surface ballast. Complements Thorium's disable-ai-entrypoints-by-default.patch (runtime hiding) and the planned 90-disable-optimization-guide-fetch.patch with an actual compile-out, plus a binary-size win.",
+        "risks": "Least-traveled config of the set: Google only builds model_execution=false for Fuchsia web_engine, so Windows link errors are plausible — hence the green-build gate. Forecloses any future local-AI feature unless re-enabled (acceptable: contrary to project positioning).",
+        "cws_impact": "None expected — webstorePrivate/extension update paths have no dependency on these targets; verify with the standard CWS install+update gate.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "MEM-09",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "services/on_device_model/on_device_model.gni:14-18: use_on_device_model_service defaults true on Windows; feeds USE_ON_DEVICE_MODEL_SERVICE buildflag (services/on_device_model/public/cpp/BUILD.gn:53-58). components/optimization_guide/features.gni:39-46 build_with_internal_optimization_guide=false for non-Chrome-branded; :49-53 build_with_model_execution default false only for Fuchsia web_engine. Dependent targets confirmed by grep: chrome/browser/ai/BUILD.gn, components/history_embeddings/core/BUILD.gn, components/autofill/core/browser/BUILD.gn, components/wallet/core/browser/BUILD.gn, components/optimization_guide/{BUILD.gn,core/BUILD.gn}.",
+          "notes": "Every factual claim verified, including the dead-code argument (is_chrome_branded proxy means the internal optimization guide can never activate in Slipstream) and the least-traveled-config risk (Windows + model_execution=false is not a Google-shipped combination — the green-build gate and defer-to-v0.2 fallback are the correct mitigations). Not a duplicate: Thorium's disable-ai-entrypoints-by-default.patch and the planned 90-disable-optimization-guide-fetch.patch are runtime-only; no compile-out exists in the plan. CWS smoke-test gate already specified. Keep."
+        }
+      },
+      {
+        "id": "MEM-10",
+        "title": "Document --process-per-site as a power-user opt-in (not a default)",
+        "mechanism": "installer",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\content\\public\\common\\content_switches.cc",
+          "D:\\src\\chromium\\src\\content\\browser\\site_info.cc",
+          "D:\\src\\chromium\\src\\content\\public\\common\\content_features.cc",
+          "D:\\src\\slipstream\\third_party\\thorium\\other\\windows-thorium-flags-conf.patch"
+        ],
+        "change": "Ship a commented '# --process-per-site' example (with tradeoff note) in the default flags conf consumed by Thorium's kept windows-thorium-flags-conf.patch mechanism, plus an FAQ/DEBLOAT.md section. Do NOT make it default.",
+        "benefit": "Answers the design question with evidence: the consolidation switch exists (content_switches.cc:550-558; consulted in site_info.cc:788-809) and merges all same-site instances into one process without weakening site isolation (it is orthogonal to --site-per-process). But upstream already ships the sane 80% of the win by default at this pin: kProcessPerSiteUpToMainFrameThreshold is FEATURE_ENABLED_BY_DEFAULT on desktop with a 2-main-frame threshold and 2GB per-process memory ceiling (content_features.cc:964-998). Tab-hoarders who want maximal merging get a documented one-liner.",
+        "risks": "As a default it would be indefensible: unbounded same-site merging means one renderer crash kills every tab of that site, giant sites accumulate multi-GB processes that discard poorly (tab discarding operates per-process), and per-tab task-manager attribution degrades. As a documented opt-in: none.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Defaulting it would trade SECURE-adjacent crash containment and discardability for MEMORY; resolved by staying opt-in.",
+        "verdict": {
+          "id": "MEM-10",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "content_switches.cc:550-558 kProcessPerSite ('process-per-site', consolidation) with :556-557 explicitly distinguishing it from --site-per-process; consulted at site_info.cc:793-797. content_features.cc:968-974 kProcessPerSiteUpToMainFrameThreshold ENABLED_BY_DEFAULT on desktop, :977-979 threshold=2, :996-998 2GB memory limit. windows-thorium-flags-conf.patch present in third_party/thorium/other/ and absent from patches/thorium_exclusions.txt.",
+          "notes": "Confirmed, including the key claim that upstream already ships bounded same-site consolidation by default at this pin (2 main frames, 2GB cap, scaling factor 1.5 at :987-989), which is exactly why default --process-per-site is indefensible and a commented opt-in is the right landing spot. The distribution mechanism (Thorium's kept flags-conf patch) verified as available. Zero code, zero rebase cost, resolves a real design question with evidence. Keep."
+        }
+      }
+    ],
+    "dropped": []
+  },
+  {
+    "dimension": "privacy",
+    "non_goals": [
+      "Canvas/WebGL/font/audio fingerprint farbling — Brave-scale renderer patch series; violates the solo-maintainer rebase budget (hard constraint 3). Rely on 3PC blocking + Privacy Sandbox off + uBO instead.",
+      "Referrer tightening beyond the platform default — strict-origin-when-cross-origin has been Chromium's default policy since M85; forcing kEnableReferrers=false breaks anti-hotlinking and some login CSRF checks for marginal entropy gain.",
+      "Disabling WebUSB/WebHID/WebSerial/Web Bluetooth — already user-gesture + per-device chooser gated (BLUETOOTH_SCANNING default ASK verified at content_settings_registry.cc:402); Slipstream's gamer audience actively uses WebHID/WebUSB configurators (VIA, Wootility, iCUE web).",
+      "User-Agent / client-hints reduction beyond Chrome defaults — the Chrome/<major>.0.0.0 UA token is a CWS hard constraint (hard constraint 1), and a nonstandard UA/CH surface is itself a fingerprint plus a breakage source.",
+      "Removing GCM/Web Push plumbing — the persistent Google connection is only established once a site holds a push subscription; ripping it out breaks a mainstream web feature for no default-state gain.",
+      "DNT + GPC enablement — VERIFIED ALREADY DONE at this pin: Thorium's thorium-browser-ui-default-prefs.patch flips kEnableDoNotTrack to true (visible in tree at chrome/browser/ui/browser_ui_prefs.cc:147-149) and GPC.patch ships Global Privacy Control; no new work, add both to the per-release verification checklist.",
+      "Alternate error pages / navigation-error web service — VERIFIED already default-off at this pin (chrome/browser/net/profile_network_context_service.cc:651-652 registers kAlternateErrorPagesEnabled false); nothing to do.",
+      "Intranet redirect random-hostname DNS probes — VERIFIED already off at this pin (components/omnibox/browser/intranet_redirector_state.cc:41-42 defaults to DISABLE_FEATURE); nothing to do.",
+      "Related Website Sets exemptions — VERIFIED already disabled by Thorium's disable-privacy-sandbox.patch (kPrivacySandboxRelatedWebsiteSetsEnabled -> false); no duplicate work.",
+      "Tor / built-in VPN / proxy integration — out of scope for an optimization-first fork; recommend documenting OS-level VPN + the PRIV-02 WebRTC default instead."
+    ],
+    "proposals": [
+      {
+        "id": "PRIV-01",
+        "title": "Block third-party cookies by default",
+        "mechanism": "default_pref",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\content_settings\\core\\browser\\cookie_settings.cc",
+          "D:\\src\\chromium\\src\\components\\content_settings\\core\\common\\pref_names.h",
+          "D:\\src\\chromium\\src\\components\\content_settings\\core\\browser\\cookie_settings.h"
+        ],
+        "change": "In CookieSettings::RegisterProfilePrefs (cookie_settings.cc lines 79-82) change the registered default of profile.cookie_controls_mode from CookieControlsMode::kIncognitoOnly to CookieControlsMode::kBlockThirdParty (enum at cookie_settings.h:41-46, kBlockThirdParty=1). One-line default flip; fold into the already-planned patches/90-default-prefs-hardening.patch.",
+        "benefit": "Kills the single largest cross-site tracking channel by default, in all profiles (not just incognito). Users keep the full chrome://settings/cookies toggle and per-site exceptions; the Storage Access API (enabled at this pin) gives embedded widgets a standards-based prompt path.",
+        "risks": "Some embedded SSO iframes, 3DS payment flows, and legacy comment/chat widgets break until the user grants a per-site exception or flips the setting back. This is the same default Brave and Firefox (ETP strict-ish) ship, so major sites already handle it via Storage Access API.",
+        "cws_impact": "None. chrome.google.com/webstore operates first-party; extension install/update pipeline does not use third-party cookies.",
+        "pillar_conflicts": "None. No effect on page-load speed (slightly less cookie traffic).",
+        "verdict": {
+          "id": "PRIV-01",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/content_settings/core/browser/cookie_settings.cc:79-82 (RegisterIntegerPref kCookieControlsMode, default kIncognitoOnly); cookie_settings.h:41-46 (enum, kBlockThirdParty=1); ShouldBlockThirdPartyCookies switch at cookie_settings.cc:268-275",
+          "notes": "Verified exact. Strengthening finding: enum comment at cookie_settings.h:42 says kOff is behaviorally equivalent to kIncognitoOnly as of June 2025, so kBlockThirdParty is the only value that blocks in regular profiles - the flip is the real switch. Storage Access API claim holds (requestStorageAccess shipped stable; STORAGE_ACCESS content setting ASK at content_settings_registry.cc:507). Not duplicated by Thorium patches or the planned prefs-hardening list (DEBLOAT.md lists prefetch/suggest/DoH/UKM only). CWS unaffected (first-party). Pref remains user-editable via chrome://settings."
+        }
+      },
+      {
+        "id": "PRIV-02",
+        "title": "WebRTC IP handling: default_public_interface_only by default",
+        "mechanism": "default_pref",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\chrome\\browser\\ui\\browser_ui_prefs.cc",
+          "D:\\src\\chromium\\src\\chrome\\common\\pref_names.h",
+          "D:\\src\\chromium\\src\\third_party\\blink\\public\\common\\peerconnection\\webrtc_ip_handling_policy.h",
+          "D:\\src\\chromium\\src\\chrome\\browser\\extensions\\pref_mapping.cc"
+        ],
+        "change": "browser_ui_prefs.cc lines 154-156 register pref webrtc.ip_handling_policy (pref_names.h:1112) with default blink::kWebRTCIPHandlingDefaultPublicAndPrivateInterfaces. Change the default constant to blink::kWebRTCIPHandlingDefaultPublicInterfaceOnly (webrtc_ip_handling_policy.h:28). One-line default flip; fold into 90-default-prefs-hardening.patch.",
+        "benefit": "WebRTC binds only the default-route interface: no local/private interface addresses and no VPN-bypass candidate leakage in ICE. This is the classic 'WebRTC leak' fix VPN users install extensions for.",
+        "risks": "Calls that require host candidates on a non-default interface (rare multi-NIC / LAN-only conferencing setups) may relay via TURN or fail; standard Meet/Zoom/Discord flows work. Extensions can still adjust it via chrome.privacy.network.webRTCIPHandlingPolicy (pref_mapping.cc:90), so user override paths survive.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None; negligible perf effect (fewer candidates to gather can slightly speed ICE).",
+        "verdict": {
+          "id": "PRIV-02",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "chrome/browser/ui/browser_ui_prefs.cc:154-156 (RegisterStringPref kWebRTCIPHandlingPolicy, default kWebRTCIPHandlingDefaultPublicAndPrivateInterfaces); pref_names.h:1112; webrtc_ip_handling_policy.h:27-28 (kWebRTCIPHandlingDefaultPublicInterfaceOnly); pref_mapping.cc:90-91 (extension override path)",
+          "notes": "All names/lines exact, but narrow the benefit claim: the on-disk default is already THORIUM's change (thorium-browser-ui-default-prefs.patch:31-35 rewrote upstream kWebRTCIPHandlingDefault -> PublicAndPrivateInterfaces), so multi-interface enumeration / VPN-bypass leakage is already fixed at this pin. The marginal delta of PublicInterfaceOnly is concealing the default-route private address - which is exactly what makes PRIV-03's enable_mdns=false safe, so this flip is load-bearing for PRIV-03. Patch note: the stage-90 hunk edits the same lines Thorium's patch produces; base it on post-Thorium context (series order already guarantees this). Risk framing stands; keep."
+        }
+      },
+      {
+        "id": "PRIV-03",
+        "title": "Fix plan regression: enable_mdns=false compiles out WebRTC local-IP concealment",
+        "mechanism": "gn_arg",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\net\\BUILD.gn",
+          "D:\\src\\chromium\\src\\services\\network\\network_context.cc",
+          "D:\\src\\chromium\\src\\third_party\\blink\\renderer\\modules\\peerconnection\\peer_connection_dependency_factory.cc",
+          "D:\\src\\chromium\\src\\third_party\\blink\\renderer\\platform\\p2p\\filtering_network_manager.cc",
+          "D:\\src\\slipstream\\config\\win_x64_avx2.gn"
+        ],
+        "change": "Slipstream's existing config sets enable_mdns=false. At this pin that BUILDFLAG(ENABLE_MDNS) (net/BUILD.gn:88) also compiles out NetworkContext::CreateMdnsResponder (network_context.cc:2660-2670) and the MdnsResponderAdapter creation in peer_connection_dependency_factory.cc:789-798; FilteringNetworkManager::GetMdnsResponder then returns nullptr (filtering_network_manager.cc:115-130), so WebRTC stops obfuscating local IPs behind .local mDNS hostnames. Decision: keep enable_mdns=false ONLY together with PRIV-02 (which stops gathering local-interface candidates entirely, making the responder moot), and add a WebRTC ICE-candidate leak check to the per-release verification list. If PRIV-02 is ever reverted, enable_mdns must go back to true.",
+        "benefit": "Prevents an accidental privacy regression (raw RFC1918 addresses in ICE candidates) introduced by a debloat flag; documents the coupling so a future config edit cannot silently re-open the leak.",
+        "risks": "None new — this constrains an existing decision. Residual: sites resolving remote peers' .local candidates lose mDNS resolution (socket_manager.cc gates that on the same flag), which matters only for LAN peer-to-peer.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Interacts with the DEBLOAT pillar's enable_mdns choice — pairing rule recorded instead of reverting the flag.",
+        "verdict": {
+          "id": "PRIV-03",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "net/BUILD.gn:88 (ENABLE_MDNS=$enable_mdns); services/network/network_context.cc:2660-2671 (CreateMdnsResponder NOTREACHED under !ENABLE_MDNS); peer_connection_dependency_factory.cc:789-798 (MdnsResponderAdapter only under BUILDFLAG(ENABLE_MDNS) + kWebRtcHideLocalIpsWithMdns); filtering_network_manager.cc:115-130 (GetMdnsResponder nullptr fallback); D:\\src\\slipstream\\config\\win_x64_avx2.gn:79 (enable_mdns=false)",
+          "notes": "Entire causal chain verified at every cited line; the regression is real and currently live in Slipstream's config given Thorium's PublicAndPrivateInterfaces default exposes one raw private host candidate once the mDNS responder is gone. Residual claim also confirmed: p2p/socket_manager.cc:116-121 gates remote .local resolution on the same buildflag. The pairing rule (keep enable_mdns=false ONLY with PRIV-02, add ICE-leak check to release verification, revert to true if PRIV-02 reverts) is the correct resolution. Record in DECISIONS.md/DEBLOAT.md."
+        }
+      },
+      {
+        "id": "PRIV-04",
+        "title": "Disable hyperlink auditing (<a ping>) by default",
+        "mechanism": "default_pref",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\chrome\\browser\\chrome_content_browser_client.cc",
+          "D:\\src\\chromium\\src\\chrome\\common\\pref_names.h",
+          "D:\\src\\chromium\\src\\chrome\\browser\\prefs\\chrome_command_line_pref_store.cc"
+        ],
+        "change": "chrome_content_browser_client.cc line 1602: RegisterBooleanPref(prefs::kEnableHyperlinkAuditing, true) -> false (pref 'enable_a_ping', pref_names.h:884). One-line default flip; fold into 90-default-prefs-hardening.patch. (--no-pings maps to the same pref via chrome_command_line_pref_store.cc:79, confirming the supported off-state.)",
+        "benefit": "Stops background click-tracking POSTs fired to third parties on link clicks. Firefox ships pings off by default; navigation is unaffected.",
+        "risks": "Essentially zero breakage — links still navigate; ad-click attribution that relies on ping falls back to redirect chains. Extensions can re-enable via chrome.privacy (pref_mapping.cc:54).",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None; removes network requests (marginal perf win).",
+        "verdict": {
+          "id": "PRIV-04",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "chrome/browser/chrome_content_browser_client.cc:1602 (RegisterBooleanPref kEnableHyperlinkAuditing, true); pref_names.h:884 (enable_a_ping); chrome_command_line_pref_store.cc:79 (kNoPings -> pref false); consumed at chrome_content_browser_client.cc:4770-4771; pref_mapping.cc:54 (extension override)",
+          "notes": "Every line citation exact. Not touched by any Thorium patch (grep of third_party/thorium/other returned nothing) and not in the planned prefs-hardening list - genuinely new. --no-pings mapping confirms the off-state is a supported configuration. Lowest-risk item in the set."
+        }
+      },
+      {
+        "id": "PRIV-05",
+        "title": "Idle Detection API: default BLOCK instead of ASK",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\content_settings\\core\\browser\\content_settings_registry.cc"
+        ],
+        "change": "content_settings_registry.cc lines 562-570: change the initial default for ContentSettingsType::IDLE_DETECTION from CONTENT_SETTING_ASK to CONTENT_SETTING_BLOCK (BLOCK is already in valid_settings). One-line change; ride 90-default-prefs-hardening.patch. Brave ships the same default.",
+        "benefit": "Sites cannot prompt to monitor user presence/away state (a behavioral-surveillance API with near-zero legitimate consumer use). Removes prompt spam too.",
+        "risks": "Workplace presence features (e.g. Google Chat idle status) show the user as always active until the user flips chrome://settings/content/idleDetection to ask/allow per site. No page breakage — API rejects as if permission denied.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "PRIV-05",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/content_settings/core/browser/content_settings_registry.cc:562-570 (IDLE_DETECTION registered CONTENT_SETTING_ASK; BLOCK in valid_settings at line 566)",
+          "notes": "Exact match. BLOCK is a registry-valid value so the one-line default change is well-formed; settings UI toggle survives. No Thorium/Slipstream overlap (no patch touches content_settings_registry.cc). Risk statement (workplace presence indicators) is fair; API rejects as permission-denied, no page breakage. Keep."
+        }
+      },
+      {
+        "id": "PRIV-06",
+        "title": "Motion sensors: default BLOCK instead of ALLOW",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\content_settings\\core\\browser\\content_settings_registry.cc"
+        ],
+        "change": "content_settings_registry.cc lines 352-360: change ContentSettingsType::SENSORS default from CONTENT_SETTING_ALLOW to CONTENT_SETTING_BLOCK (BLOCK already valid). One-line change; ride 90-default-prefs-hardening.patch.",
+        "benefit": "DeviceMotion/DeviceOrientation/generic-sensor readings are a documented fingerprinting and inference side-channel (accelerometer on convertible/laptop devices). Windows desktop is the one platform where blocking costs almost nothing — most target machines have no sensors at all.",
+        "risks": "Sensor-equipped laptops/tablets lose auto-behavior on panorama viewers, some WebXR/AR demos, and tilt-controlled web games until allowed per-site (toggle stays at chrome://settings/content/sensors). Sites see 'no sensor' rather than an error.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Slipstream targets gamers: tilt-based web games are rare on desktop, but document the per-site re-enable in the FAQ.",
+        "verdict": {
+          "id": "PRIV-06",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/content_settings/core/browser/content_settings_registry.cc:352-360 (SENSORS registered CONTENT_SETTING_ALLOW, DESKTOP|PLATFORM_ANDROID; BLOCK in valid_settings at line 355)",
+          "notes": "Exact match. Registered for DESKTOP so the flip applies on Windows; ASK is also valid if a softer default is ever wanted. Sites observe no-sensor rather than an exception, so feature-detect code keeps working. Gamer-pillar caveat (tilt web games) already acknowledged with the per-site re-enable path. Keep."
+        }
+      },
+      {
+        "id": "PRIV-07",
+        "title": "Battery Status API: report constant plugged-in values",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\third_party\\blink\\renderer\\modules\\battery\\battery_manager.cc",
+          "D:\\src\\chromium\\src\\third_party\\blink\\renderer\\modules\\battery\\navigator_battery.idl",
+          "D:\\src\\chromium\\src\\third_party\\blink\\renderer\\modules\\battery\\battery_dispatcher.cc"
+        ],
+        "change": "navigator.getBattery() (battery_manager.cc:22-50) has no RuntimeEnabled/base::Feature gate at this pin (navigator_battery.idl carries only [SecureContext]), so no flag/pref route exists. Add a ~10-line stage-90 patch in BatteryManager (or BatteryDispatcher::OnDidChange) to always surface the constant tuple charging=true, chargingTime=0, dischargingTime=+Infinity, level=1.0 — exactly what a desktop tower already reports — instead of live laptop readings.",
+        "benefit": "Removes battery level/discharge-rate fingerprinting and 'low battery' behavioral targeting on laptops, while keeping the API present (no feature-detect breakage) and indistinguishable from a plugged-in desktop. Deterministic constant, not entropy farbling.",
+        "risks": "Sites can no longer warn laptop users about low battery mid-task (negligible for a desktop-first browser). Small Blink patch = modest rebase debt; the battery module changes rarely upstream.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "PRIV-07",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "battery_manager.cc:22-50 (getBattery, no feature gate); navigator_battery.idl:6-8 (only [SecureContext, MeasureAs]); battery_dispatcher.cc:27-31 (OnDidChange patch point); no Battery entry in runtime_enabled_features.json5 (grep empty)",
+          "notes": "Adversarial check of the no-flag-route claim passed: no RuntimeEnabled feature, no base::Feature, so a small patch is genuinely the only mechanism - proposal correctly self-classifies as patch. Spoofed tuple (charging=true, chargingTime=0, dischargingTime=Infinity, level=1.0) is byte-identical to real desktop-tower output, so it adds no fingerprinting entropy and target hardware sees zero behavior change. Alternative patch point with equal effect: services/device battery_status_manager_win (browser-side); renderer-side BatteryDispatcher::OnDidChange is fine and the module is low-churn. Keep."
+        }
+      },
+      {
+        "id": "PRIV-08",
+        "title": "Password leak detection off by default (keyless build honesty)",
+        "mechanism": "default_pref",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\password_manager\\core\\browser\\password_manager.cc",
+          "D:\\src\\chromium\\src\\components\\password_manager\\core\\common\\password_manager_pref_names.h",
+          "D:\\src\\chromium\\src\\components\\password_manager\\core\\browser\\leak_detection\\leak_detection_check_impl.cc"
+        ],
+        "change": "password_manager.cc line 575 registers profile.password_manager_leak_detection (pref_names.h:195) default true. Flip to false; ride 90-default-prefs-hardening.patch. LeakDetectionCheck::CanStartLeakCheck (leak_detection_check_impl.cc:225-237) gates solely on this pref, so the flip is complete.",
+        "benefit": "Stops the browser from sending encrypted-credential payloads to Google's leak-check endpoint on every login. In Slipstream's keyless build the request cannot succeed anyway — the flip aligns the shipped default with reality instead of emitting doomed credential-derived traffic (also cleans up the per-release zero-request idle capture).",
+        "risks": "Users lose breached-password warnings (already non-functional without API keys). Settings toggle remains for personal builds that inject a private key via local_keys.gn. Document in FAQ next to the Safe Browsing posture.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "SECURE pillar: honest trade — feature is inert keyless; recommend FAQ points users to haveibeenpwned or their password manager's checker.",
+        "verdict": {
+          "id": "PRIV-08",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "password_manager.cc:574-576 (kPasswordLeakDetectionEnabled default true); password_manager_pref_names.h:195-196 (profile.password_manager_leak_detection); leak_detection_check_impl.cc:225-237 (CanStartLeakCheck gates on the pref)",
+          "notes": "All lines exact. CanStartLeakCheck additionally consults a policy URL blocklist but the pref is the master gate, so the flip is complete as claimed. Keyless-build rationale is sound - the credential-derived request is doomed traffic; flipping the default also cleans the idle-capture baseline. Settings toggle survives for keyed personal builds. Document next to the Safe Browsing posture per DECISIONS.md style. Keep."
+        }
+      },
+      {
+        "id": "PRIV-09",
+        "title": "Disable Autofill server crowdsourcing (queries + uploads)",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\autofill\\core\\common\\autofill_debug_features.cc"
+        ],
+        "change": "autofill_debug_features.cc line 130: BASE_FEATURE(kAutofillServerCommunication, base::FEATURE_ENABLED_BY_DEFAULT) -> FEATURE_DISABLED_BY_DEFAULT. One-line feature default flip (stage-90 patch alongside the other feature flips).",
+        "benefit": "Stops uploading form-structure metadata (field signatures, page URLs' form shapes) to Google's Autofill server and stops downloading crowdsourced predictions. Local heuristics and locally saved addresses/passwords keep working.",
+        "risks": "Field-type detection quality drops on unusual/complex forms (server predictions beat local regex heuristics there). Verify during the v0.1 idle capture whether keyless builds were failing these calls anyway — if so, the flip costs nothing.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "PRIV-09",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/autofill/core/common/autofill_debug_features.cc:130 (BASE_FEATURE(kAutofillServerCommunication, FEATURE_ENABLED_BY_DEFAULT)); gate at autofill_crowdsourcing_manager.cc:723-727 (IsEnabled checks the feature), server URL param at :175-179",
+          "notes": "Exists at the exact cited file/line; feature moved into the features::debug namespace at this pin (callers use features::debug::kAutofillServerCommunication). Flip verifiably kills both StartQueryRequest and uploads via IsEnabled(). Rebase caveat to record: upstream classifies this as a debug feature and may delete it in a future milestone - fallback if removed is forcing switches::kAutofillServerURL invalid (autofill_crowdsourcing_manager.cc:183-189 disables on invalid URL) or a small patch. Not duplicated by variations-neutering or prefs-hardening plans. Keep."
+        }
+      },
+      {
+        "id": "PRIV-10",
+        "title": "Disable network time service queries to Google",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\network_time\\network_time_tracker.cc"
+        ],
+        "change": "network_time_tracker.cc lines 63-65: kNetworkTimeServiceQuerying is FEATURE_ENABLED_BY_DEFAULT on Windows and polls kTimeServiceURL = http://clients2.google.com/time/1/current (line 135) roughly daily. Flip to FEATURE_DISABLED_BY_DEFAULT (stage-90 feature-flip patch).",
+        "benefit": "Removes a recurring background beacon to clients2.google.com from every install; required anyway to reach the 'zero Google requests at idle' verification bar in docs/DEBLOAT.md.",
+        "risks": "SECURE pillar trade: the bad-clock SSL interstitial loses its trusted time source and falls back to system time, so users with skewed clocks get a generic cert error instead of a 'fix your clock' page. Windows NTP keeps clocks sane on the target platform; document the trade in DECISIONS.md.",
+        "cws_impact": "None (CRLSet/component-updater security channel untouched).",
+        "pillar_conflicts": "Mild SECURE conflict as described; recommend accepting.",
+        "verdict": {
+          "id": "PRIV-10",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "components/network_time/network_time_tracker.cc:62-66 (kNetworkTimeServiceQuerying FEATURE_ENABLED_BY_DEFAULT on non-CrOS/iOS, i.e. Windows, at line 65); :135 (kTimeServiceURL = http://clients2.google.com/time/1/current); gate at :331-334 (AreTimeFetchesEnabled)",
+          "notes": "Verified (proposal's 63-65 spans the platform-conditional pair; Windows branch is line 65). Query cadence params at :72-84 confirm a recurring background beacon (~1-3/day). One framing correction: DEBLOAT.md's verification bar names UMA/variations/optimization-guide/RLZ endpoints only, so this flip widens the zero-idle-traffic bar rather than being strictly required by it - update DEBLOAT.md wording when landing. SECURE trade (bad-clock interstitial falls back to system time; Windows NTP mitigates) accurately stated; CRLSet/component-updater untouched. Keep."
+        }
+      },
+      {
+        "id": "PRIV-11",
+        "title": "Default search engine: put it to the user (options, not a unilateral switch)",
+        "mechanism": "installer",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\components\\search_engines\\default_search_manager.h",
+          "D:\\src\\chromium\\src\\chrome\\browser\\first_run\\first_run.cc",
+          "D:\\src\\chromium\\src\\third_party\\search_engines_data\\resources\\definitions\\prepopulated_engines.json",
+          "D:\\src\\chromium\\src\\components\\search_engines\\search_engines_switches.cc",
+          "D:\\src\\chromium\\src\\components\\search_engines\\template_url_prepopulate_data.cc"
+        ],
+        "change": "USER DECISION with three costed options. (A) Status quo: Google default; search-suggest already off in the prefs-hardening plan, so typed queries only go to Google on submit. (B) Ship DuckDuckGo as first-run default via the installer's initial_preferences file seeding default_search_provider_data.template_url_data (pref name at default_search_manager.h:39-44; first_run.cc:431-455 copies arbitrary prefs into the first profile with proper tracked-pref MACs; duckduckgo defined at prepopulated_engines.json:121). Note the legacy search_provider_overrides route is DEAD at this pin — kIgnoreSearchProviderOverrides is FEATURE_ENABLED_BY_DEFAULT (search_engines_switches.cc:35). (C) Show Chromium's own EEA-style choice screen to everyone on first run: --force-search-engine-choice-screen exists (search_engines_switches.cc:26-27) but is a testing switch; production needs a small eligibility patch in components/search_engines/search_engine_choice/search_engine_choice_service.cc. Recommendation: decide between B and C before v0.1; C is the most defensible for a privacy-first brand, B is the cheapest.",
+        "benefit": "Aligns the most visible privacy choice in the browser with the PRIVACY-FIRST brand without imposing it: Google fallback plumbing (GetPrepopulatedFallbackSearch hardcodes google.id, template_url_prepopulate_data.cc:277-284) stays intact either way.",
+        "risks": "B affects only the initial profile at first run (later profiles fall back to Google — document); DuckDuckGo results quality is a common user complaint, so keep switching frictionless. C adds a real patch to a Google-churned area (choice screen code moves every few milestones) — the one proposal here with nontrivial rebase cost.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None; search engine choice does not touch page-load performance.",
+        "verdict": {
+          "id": "PRIV-11",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "default_search_manager.h:39-40 (default_search_provider_data.template_url_data); first_run.cc:431-455 (initial_preferences dictionary -> InitializePrefsFromMasterPrefs); prepopulated_engines.json:121 (duckduckgo); search_engines_switches.cc:26-27 (kForceSearchEngineChoiceScreen) and :35 (kIgnoreSearchProviderOverrides ENABLED_BY_DEFAULT); template_url_prepopulate_data.cc:277-284 (GetPrepopulatedFallbackSearch hardcodes google.id)",
+          "notes": "All five evidence points verified exactly, including the two claims most worth attacking: the legacy search_provider_overrides route really is dead (feature enabled by default at :35) and the testing-only status of --force-search-engine-choice-screen is correctly flagged. No duplication: Thorium's thorium-search-engines-data.patch only adds DuckDuckGo to regional engine lists (helps options A/B by guaranteeing DDG appears in the picker), never changes the default. Correctly framed as a user decision with honest costs; option C's rebase-burden warning is accurate for a Google-churned area. Keep."
+        }
+      }
+    ],
+    "dropped": []
+  },
+  {
+    "dimension": "security",
+    "non_goals": [
+      "Brave-style fingerprint farbling / anti-fingerprinting rewrites — large invasive patch series across Blink; violates the solo-maintainer rebase budget (hard constraint 3); document as a known limitation in SECURITY.md instead.",
+      "V8 JIT-less, lite mode, or disabling Maglev/TurboFan for exploit-surface reduction — directly violates the optimization-first hard constraint; the V8 sandbox (pinned in SEC-V8SBX-11) is the chosen containment strategy.",
+      "Strict HTTPS-Only default (registering kHttpsOnlyModeEnabled default-true) — warning-fatigue on every HTTP site trains users to click through; balanced auto-enable (SEC-HFM-01) captures most of the value, and kHttpsFirstModeIncognito is already default-on upstream.",
+      "Reverting Thorium's allow_manifest_v2_extensions.patch — it unconditionally re-enables MV2 (ShouldDisableLegacyExtensions returns false, no flag gate), but keeping uBO classic working is a recorded product decision (DECISIONS.md); risk is documented, and exposure is bounded because CWS no longer serves new MV2 listings.",
+      "Blocking the memory pillar's --process-per-site on security grounds — audit verdict: strict site isolation is default-on for our config (chrome/common/chrome_features.cc:1650 kSitePerProcess ENABLED on desktop; desktop has no memory threshold per components/site_isolation/site_isolation_policy.cc; ChromeContentBrowserClient::ShouldEnableStrictSiteIsolation consults it; NOTHING in Thorium's 151-patch series touches site isolation — verified by grep). Process-per-site consolidates same-SITE instances only, so the cross-site process boundary survives; memory pillar wins. Caveats to record: bigger crash/compromise blast radius per site, and note upstream's bounded kProcessPerSiteUpToMainFrameThreshold (content_features.cc:968, already default-on, threshold 2) as the safer middle ground if full --process-per-site shows problems.",
+      "Shipping a Safe Browsing API key or flipping Safe Browsing on — prohibited by the existing keyless decision; keyless-inert posture with SmartScreen + uBO stands.",
+      "kWinSboxRestrictCoreSharingOnRenderer (SMT side-channel isolation, 24H2+) — restricting core sharing on renderers taxes multithreaded page workloads; conflicts with FAST on gamer hardware where SMT matters.",
+      "Removing the Windows registry external-extension provider — already prompt-gated by default on Windows (extensions/common/feature_switch.cc:22-27, prompt_for_external_extensions DEFAULT_ENABLED) and removal would break legitimate CWS-hosted deployments and enterprise workflows.",
+      "OriginKeyedProcessesByDefault / broader isolated-sandboxed-iframes tightening — meaningful process-count/memory cost on 8-16 GB machines; conflicts with the MEMORY pillar for marginal gain over strict site isolation.",
+      "Excluding widevine-cdm-support.patch over ignore_missing_widevine_signing_cert=true — audited: build-time convenience only (skips a build assert when no Widevine signing cert is present); CDM host verification is off in non-branded builds regardless and bundle_widevine_cdm=false makes the .sig path moot; no runtime signature-verification bypass exists.",
+      "Excluding thorium-sandbox-compat.patch — audited: Linux-only (suid sandbox PIE flags + one extra allowed syscall in the Linux audio seccomp policy); zero Windows impact.",
+      "Excluding enable-extension-in-incognito.patch — audited: Android-only Java changes; zero Windows impact.",
+      "Excluding disable-startup-warning-infobars.patch — audited and deliberately kept: it suppresses the missing-Google-API-keys infobar (which a keyless fork would otherwise show every launch) and the obsolete-OS infobar; it does NOT touch the bad-flags prompt (restored separately via SEC-BADFLAG-03) and keeps the OSCryptAsync availability infobar.",
+      "Certificate Transparency / CRLSet / Chrome Root Store changes — already correctly kept via component updater (DEBLOAT.md); the 90-trim-component-updater patch must continue to allowlist these, verified per release by the existing idle-capture gate."
+    ],
+    "proposals": [
+      {
+        "id": "SEC-HFM-01",
+        "title": "HTTPS-First Mode (Balanced) on by default via kHttpsFirstBalancedModeAutoEnable",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\chrome\\common\\chrome_features.cc",
+          "D:\\src\\chromium\\src\\chrome\\common\\pref_names.h",
+          "D:\\src\\chromium\\src\\chrome\\browser\\ssl\\https_upgrades_util.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\ui\\browser_ui_prefs.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\ssl\\https_first_mode_settings_tracker.cc"
+        ],
+        "change": "Flip BASE_FEATURE(kHttpsFirstBalancedModeAutoEnable) at chrome/common/chrome_features.cc:1279 from FEATURE_DISABLED_BY_DEFAULT to FEATURE_ENABLED_BY_DEFAULT (one-line stage-90 flip, e.g. inside 90-default-prefs-hardening.patch). Do NOT force the prefs: kHttpsOnlyModeEnabled and kHttpsFirstBalancedMode stay registered false (browser_ui_prefs.cc:219-224) so the user's explicit choice always wins — https_upgrades_util.cc:144-156 only applies the auto-enable when neither pref was ever touched. Upstream already ships the machinery enabled: kHttpsFirstBalancedMode (feature) is ENABLED at :1275, kHttpsUpgrades at :1301, and kHttpsFirstModeIncognito at :1316 — this flip just activates balanced interstitials for default-settings profiles. The startup-state enum already has kEnabledBalancedAutoEnable (https_first_mode_settings_tracker.cc:236-237), so telemetry/settings UI handle this state natively.",
+        "benefit": "Every profile gets HTTPS-First balanced protection out of the box: navigations are upgraded to HTTPS and a click-through interstitial appears before falling back to HTTP, but only where HTTPS can reasonably be expected — no warnings on intranet/single-label hosts, so warning fatigue stays low. Directly serves PRIVACY-FIRST and SECURE with zero page-load cost on HTTPS sites (fallback delay is 3s only on broken-HTTPS sites, kHttpsUpgradesFallbackDelay).",
+        "risks": "Occasional interstitial on legacy HTTP-only public sites (one click-through, then remembered in kHttpAllowlist). User toggle in settings and the HttpsOnlyMode enterprise policy both override cleanly. Rebase cost: one line.",
+        "cws_impact": "None. CWS is HTTPS; extension update endpoints are HTTPS; no interaction.",
+        "pillar_conflicts": "None. FAST unaffected on HTTPS sites.",
+        "verdict": {
+          "id": "SEC-HFM-01",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\chromium\\src\\chrome\\common\\chrome_features.cc:1279-1280 (BASE_FEATURE(kHttpsFirstBalancedModeAutoEnable, FEATURE_DISABLED_BY_DEFAULT)); :1275 kHttpsFirstBalancedMode ENABLED; :1301 kHttpsUpgrades ENABLED; :1316 kHttpsFirstModeIncognito ENABLED; chrome/browser/ui/browser_ui_prefs.cc:219-224 both prefs registered false; chrome/browser/ssl/https_upgrades_util.cc:140-157 IsBalancedModeEnabled applies the feature only when neither pref HasPrefPath; https_first_mode_settings_tracker.cc:235-238 kEnabledBalancedAutoEnable",
+          "notes": "Every mechanism claim independently confirmed at the pin, including the user-choice-wins logic (HasPrefPath check at https_upgrades_util.cc:144-146). Not duplicated by Thorium (no patch touches HttpsFirst*) or Slipstream (no mention in docs/config; patches/90-*.patch files don't exist yet). Bonus: 90-neuter-variations.patch means this build would NEVER receive Google's Finch auto-enable rollout, so the code-default flip is the only way to get it. One cosmetic nit: click-through exceptions are remembered via SSL host state, not the kHttpAllowlist pref (pref_names.h:3037 is the enterprise policy allowlist) — does not affect the change. One-line flip, clean overrides. Keep."
+        }
+      },
+      {
+        "id": "SEC-CONF-02",
+        "title": "Exclude windows-thorium-flags-conf.patch — silent flag injection from user-writable %APPDATA%",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\slipstream\\third_party\\thorium\\other\\windows-thorium-flags-conf.patch",
+          "D:\\src\\chromium\\src\\chrome\\app\\chrome_main_delegate.cc",
+          "D:\\src\\slipstream\\patches\\thorium_exclusions.txt"
+        ],
+        "change": "Add 'other/windows-thorium-flags-conf.patch' to patches/thorium_exclusions.txt with rationale in DECISIONS.md. The patch makes chrome_main_delegate.cc PreSandboxStartup() read %APPDATA%\\Thorium\\thorium-flags.conf (base::DIR_ROAMING_APP_DATA — writable by any unprivileged process) plus <exe dir>\\thorium-flags.conf, and append every switch found onto the browser command line, filtering only --process-type and --user-data-dir. If flags-from-a-file is wanted later, re-add a Slipstream variant restricted to the exe directory only (admin-protected under Program Files for system installs).",
+        "benefit": "Closes a no-admin persistence vector: any malware (or malicious installer) running as the user can plant --load-extension, --proxy-server, --host-rules, --js-flags, or even --no-sandbox into a conf file and silently reconfigure/desandbox every future browser launch — no shortcut tampering, no UAC, and (combined with Thorium's relaxed bad-flags warnings) no user-visible warning. This is the single largest security-negative patch remaining in the accepted series.",
+        "risks": "Loses a Thorium convenience feature (persistent flags without editing shortcuts). Users retain chrome://flags and shortcut arguments. Zero code risk — pure exclusion; rebase burden decreases.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Minor Thorium feature-parity loss; no FAST/MEMORY impact.",
+        "verdict": {
+          "id": "SEC-CONF-02",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\slipstream\\third_party\\thorium\\other\\windows-thorium-flags-conf.patch (exists; series line 116); applied in tree at chrome/app/chrome_main_delegate.cc:546-624 — AppendThoriumFlagsFromConfigFiles reads DIR_EXE (:609-613) and base::DIR_ROAMING_APP_DATA\\Thorium\\thorium-flags.conf (:615-622), filtering only kProcessType/kUserDataDir (:594-595)",
+          "notes": "Refutation attempted and failed: the code does exactly what the proposal says — every switch in a user-writable %APPDATA% file (plus exe dir) is appended, with only process-type and user-data-dir filtered (:594-598); --no-sandbox, --load-extension, --proxy-server all pass. Not already in thorium_exclusions.txt. Combined with relax-bad-flags-warning.patch there is no user-visible tripwire either. The exe-dir fallback variant suggestion is sound (Program Files is admin-ACL'd for system installs). Pure exclusion, rebase burden decreases. Keep."
+        }
+      },
+      {
+        "id": "SEC-BADFLAG-03",
+        "title": "Exclude relax-bad-flags-warning.patch — restore warnings for dangerous flags",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\slipstream\\third_party\\thorium\\other\\relax-bad-flags-warning.patch",
+          "D:\\src\\chromium\\src\\chrome\\browser\\ui\\startup\\bad_flags_prompt.cc",
+          "D:\\src\\slipstream\\patches\\thorium_exclusions.txt"
+        ],
+        "change": "Add 'other/relax-bad-flags-warning.patch' to patches/thorium_exclusions.txt. The patch removes extensions::switches::kExtensionsOnChromeURLs, switches::kEnableBlinkFeatures/kDisableBlinkFeatures, and switches::kEnableUnsafeWebGPU from the kBadFlags warning list in chrome/browser/ui/startup/bad_flags_prompt.cc (upstream list starts ~line 113). Excluding it restores stock Chromium's 'You are using an unsupported command-line flag; stability and security will suffer' infobar for those flags.",
+        "benefit": "The bad-flags infobar is the only user-visible tripwire when a shortcut or (until SEC-CONF-02 lands) a conf file has been tampered with to run extensions on chrome:// pages (full UI spoof/priv-esc surface), flip Blink features, or enable unsandboxed WebGPU. A security-positioned browser should not ship with that tripwire cut.",
+        "risks": "Power users who deliberately use those flags see a dismissible infobar per session — cosmetic. Pure exclusion; no rebase cost.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None; mild Thorium-UX deviation.",
+        "verdict": {
+          "id": "SEC-BADFLAG-03",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\slipstream\\third_party\\thorium\\other\\relax-bad-flags-warning.patch (exists; series line 72) removes kExtensionsOnChromeURLs, kDisableBlinkFeatures/kEnableBlinkFeatures, kEnableUnsafeWebGPU from kBadFlags; confirmed applied — grep of chrome/browser/ui/startup/bad_flags_prompt.cc in the tree finds none of the four symbols (kExtensionsOnExtensionURLs kept, as the patch shows)",
+          "notes": "Patch content matches the proposal exactly (3 warning entries cut: chrome:// extension scripts, Blink feature overrides, unsafe WebGPU). Excluding it restores stock warning behavior with zero code risk. Not already excluded. Complements SEC-CONF-02 — until/even after that lands, shortcut tampering with these flags becomes visible again. No CWS/perf interaction. Keep."
+        }
+      },
+      {
+        "id": "SEC-ABE-04",
+        "title": "Enable App-Bound Encryption: register the elevation service for Chromium-branded system installs",
+        "mechanism": "installer",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\chrome\\installer\\setup\\install_worker.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\os_crypt\\app_bound_encryption_win.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\os_crypt\\app_bound_encryption_provider_win.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\os_crypt\\app_bound_encryption_provider_win.h",
+          "D:\\src\\chromium\\src\\chrome\\install_static\\chromium_install_modes.h",
+          "D:\\src\\chromium\\src\\chrome\\install_static\\install_util.cc",
+          "D:\\src\\chromium\\src\\chrome\\installer\\mini_installer\\chrome.release",
+          "D:\\src\\chromium\\src\\chrome\\installer\\setup\\uninstall.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\browser_process_impl.cc",
+          "D:\\src\\chromium\\src\\chrome\\elevation_service\\caller_validation.cc",
+          "D:\\src\\slipstream\\branding\\brand.json"
+        ],
+        "change": "Three coordinated pieces. (1) Small patch to chrome/installer/setup/install_worker.cc: remove the #if BUILDFLAG(GOOGLE_CHROME_BRANDING) guards around AddElevationServiceWorkItems (definition at :117-139, call site at :365-372) so system-level installs register the service — uninstall.cc:639-647 already deletes it unguarded, and elevation_service.exe is already built (chrome/BUILD.gn data_deps) and packaged (chrome.release:120). (2) Wire Slipstream's reserved GUIDs from branding/brand.json (elevator_clsid {A3886921-...}, elevator_iid {0725683C-...}) into chrome/install_static/chromium_install_modes.h (currently still Chromium/Thorium's stock D133B120-.../bb19a0e5-... at :64-73 — shipping those would collide with a side-by-side vanilla Chromium). (3) Ship a system-level (--system-level) installer as the recommended default. ABE then activates automatically: browser_process_impl.cc:1556-1568 registers AppBoundEncryptionProviderWin at precedence 15 over DPAPI's 10 unconditionally on Windows. ANSWERS: ABE works fine in a rebranded fork with fresh CLSIDs — nothing is Google-keyed; caller validation (caller_validation.cc MaybeTrimProcessPath) validates the calling exe's install path dynamically, not a hardcoded brand. If the elevation service is NOT registered (per-user install, or installer skipped it): GetAppBoundEncryptionSupportLevel returns kNotSystemLevel for per-user (app_bound_encryption_win.cc:71-73) or CoCreateInstance(GetElevatorClsid()) fails REGDB_E_CLASSNOTREG (:180-182) — the provider reports kPermanentlyUnavailable and OSCryptAsync silently falls back to DPAPI ('v10' data): no data loss, no user-visible error, just no ABE hardening. SMOKE TEST: (a) after system install, `sc qc SlipstreamElevationService` (GetElevationServiceName = base app name + 'ElevationService', install_util.cc:357-361) shows SERVICE_DEMAND_START; (b) HKLM\\Software\\Classes\\CLSID\\{A3886921-7254-47BC-97E7-28EE702B950B}\\LocalServer32 points at elevation_service.exe; (c) after first run, Local State contains \"os_crypt\":{\"app_bound_encrypted_key\":\"...\"} whose base64 decodes to an 'APPB'-prefixed blob (app_bound_encryption_provider_win.h:41-46); (d) chrome://histograms shows OSCrypt.AppBoundProvider.Encrypt.ResultCode == 0 and, on second launch, KeyRetrieval.Status == success; (e) new cookie DB values carry the 'v20' prefix (v10 = DPAPI fallback); (f) negative test: per-user install must still work end-to-end with v10 data.",
+        "benefit": "Infostealer resistance parity with Google Chrome: the OSCrypt key is decryptable only via a SYSTEM COM service that path-validates the caller, so user-context malware can no longer trivially DPAPI-decrypt cookies/passwords. This is the highest-value Windows security feature currently dead in every Chromium-branded fork.",
+        "risks": "Installer patch is small but touches update/uninstall flows — must test install/upgrade/uninstall cycles. Portable-zip users and per-user installs silently stay on DPAPI (document in SECURITY.md; interacts sanely with Thorium's kept --disable-encryption portable switches since portable mode is never a system install). Moving/renaming the install dir breaks decrypt until re-encrypt (upstream handles via kRegenerateKeyForCatastrophicFailures, provider_win.cc:37-57). User-data-dir relocation via --user-data-dir gets kNotUsingDefaultUserDataDir = temporary unavailable (no data loss, provider_win.cc:194-202).",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None. One extra demand-start service; zero runtime cost until an encrypt/decrypt call.",
+        "verdict": {
+          "id": "SEC-ABE-04",
+          "exists_at_pin": true,
+          "verdict": "modify",
+          "evidence": "D:\\src\\slipstream\\third_party\\thorium\\other\\mini_installer.patch (hunks '@@ -109,6 +114,7' and '@@ -290,30 +342,34' ADD '+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)' around AddElevationServiceWorkItems definition and call site); post-patch tree: install_worker.cc:117-139/:365-372 guarded, uninstall.cc:639-647 unguarded; browser_process_impl.cc:1556-1567 (precedence 15 vs DPAPI 10); app_bound_encryption_win.cc:71-73 kNotSystemLevel, :180-182 CoCreateInstance(GetElevatorClsid()); app_bound_encryption_provider_win.h:41-50 ('APPB' prefix, 'v20' tag); provider_win.cc:37-69 kRegenerateKeyForCatastrophicFailures ENABLED, :194-202 kNotUsingDefaultUserDataDir; chromium_install_modes.h:64-73 stock D133B120/bb19a0e5 GUIDs; install_util.cc:357-367 name = BaseAppName+'ElevationService'; chrome.release:120; caller_validation.cc:60/:141 MaybeTrimProcessPath/ValidatePath; brand.json:16-17 reserved GUIDs",
+          "notes": "Right idea, wrong attribution for piece (1): at this pin the GOOGLE_CHROME_BRANDING guards around AddElevationServiceWorkItems are NOT upstream — Thorium's other/mini_installer.patch ADDS them (upstream 152 registers the elevation service for ALL system installs, which is why the mini_installer/uninstall/chrome.release plumbing is unguarded). Correct mechanism: revert Thorium's two guard hunks via a stage-90 patch (or maintain an amended mini_installer.patch), and first determine WHY Thorium disabled it (likely to keep their unsigned installer from registering a COM service) before shipping. Rebase target is Thorium's patch, not Google churn. Every other claim — precedence, fallback semantics (kNotSystemLevel / REGDB_E_CLASSNOTREG -> DPAPI v10, no data loss), APPB/v20 markers, dynamic path validation (nothing Google-keyed), GUID collision risk with stock D133B120, service naming, smoke test — verified exactly. Pieces (2) and (3) stand as written. High value; keep the substance with the corrected piece (1)."
+        }
+      },
+      {
+        "id": "SEC-NETSBX-05",
+        "title": "Sandbox the network service on Windows (LPAC)",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\sandbox\\policy\\features.cc",
+          "D:\\src\\chromium\\src\\chrome\\browser\\net\\system_network_context_manager.cc"
+        ],
+        "change": "Flip sandbox::policy::features::kNetworkServiceSandbox (sandbox/policy/features.cc:20) and kWinSboxNetworkServiceSandboxIsLPAC (:58-59) to FEATURE_ENABLED_BY_DEFAULT; optionally also kNetworkServiceCodeIntegrity (:70) after burn-in. Platform gating is already handled: IsNetworkSandboxSupported() (features.cc:143-168) auto-declines on ARM64 and pre-20H1 — irrelevant for our x64 AVX2 (Haswell+, Win10 20H1+ realistically) floor. Safety nets already exist: the enterprise policy pref kNetworkServiceSandboxEnabled overrides in both directions (system_network_context_manager.cc:289-296), and a failed sandboxed launch auto-falls back unsandboxed (kDisabledBecauseOfFailedLaunch, :262).",
+        "benefit": "The network service parses TLS, HTTP/2/3, QUIC, DNS, cookies — historically bug-dense code that currently runs UNSANDBOXED in our build because Google gates the sandbox behind a Finch rollout that variations-neutered builds will never receive. Flipping the code default gets us the mitigation Google's own fleet is converging on: network compromise no longer equals user-context code execution.",
+        "risks": "Known compat class: enterprise Negotiate/Kerberos proxy auth and some AV/VPN products that inject into the network process (LSPs). Escape hatches: NetworkServiceSandboxEnabled policy, plus automatic fallback on launch failure. Must be in the pre-release smoke test: proxy auth, captive portal, uBO filter-list fetch, CWS install, component updates. Rebase cost: 2-3 lines.",
+        "cws_impact": "Verify CWS downloads and extension auto-update under the sandboxed network service in the smoke test (expected clean — Google's rollout has covered these for years).",
+        "pillar_conflicts": "MEMORY: one process gains an AppContainer token — negligible. FAST: no measurable page-load impact in upstream experiments.",
+        "verdict": {
+          "id": "SEC-NETSBX-05",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\chromium\\src\\sandbox\\policy\\features.cc:20 kNetworkServiceSandbox DISABLED_BY_DEFAULT; :58-59 kWinSboxNetworkServiceSandboxIsLPAC DISABLED; :70 kNetworkServiceCodeIntegrity DISABLED; :143-168 IsNetworkSandboxSupported (ARM64 + pre-20H1 auto-decline); chrome/browser/net/system_network_context_manager.cc:257-302 — kDisabledBecauseOfFailedLaunch at :262, kNetworkServiceSandboxEnabled policy pref override at :289-296",
+          "notes": "All three feature names, defaults, and both safety nets verified at the claimed lines. Platform gating confirmed irrelevant for the x64/20H1+ floor. No Thorium patch touches NetworkServiceSandbox (grep of other/*.patch: zero hits); no Slipstream duplicate. Note the LPAC flag's comment: with kNetworkServiceSandbox on but LPAC off the service still gets an AppContainer sandbox — so the two-flag flip is coherent and LPAC is the stricter target. Automatic unsandboxed fallback on failed launch (HasFailedPreviousRecentLaunch) bounds the breakage risk exactly as claimed. Smoke-test list (proxy auth, CWS install, component update) is the right burn-in. Keep; stage kNetworkServiceCodeIntegrity after burn-in as proposed."
+        }
+      },
+      {
+        "id": "SEC-RAC-06",
+        "title": "Renderer AppContainer on",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\sandbox\\policy\\features.cc"
+        ],
+        "change": "Flip sandbox::policy::features::kRendererAppContainer (sandbox/policy/features.cc:54) to FEATURE_ENABLED_BY_DEFAULT. Ship first in a pre-release/canary tag and hold it there for one cycle before promoting.",
+        "benefit": "Adds the AppContainer boundary (capability-based kernel object access denial) on top of the renderer's restricted token + win32k lockdown, closing residual kernel-object attack surface for the most-attacked process type. Defense-in-depth for the process class where the V8/Blink exploit lands first.",
+        "risks": "Highest-risk flip in this set: third-party software that injects into renderers (AV shims, some IME/accessibility tooling) can break page rendering; Google has cycled this experiment repeatedly without shipping default-on, which signals real-world compat friction. Killswitch is a one-line revert; consider a chrome://flags entry so affected users can self-serve disable. Gate final default-on on crash/white-screen telemetry from our own testers (we have no fleet telemetry by design).",
+        "cws_impact": "None directly; extension content scripts run in the same renderers — covered by the same smoke test.",
+        "pillar_conflicts": "FAST: sub-millisecond process-launch overhead; no steady-state cost.",
+        "verdict": {
+          "id": "SEC-RAC-06",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\chromium\\src\\sandbox\\policy\\features.cc:54 BASE_FEATURE(kRendererAppContainer, FEATURE_DISABLED_BY_DEFAULT); consulted at sandbox/policy/win/sandbox_win.cc:328; enterprise policy escape hatch exists — prefs::kRendererAppContainerEnabled mapped at chrome/browser/chrome_content_browser_client.cc:5373",
+          "notes": "Exists exactly as named and is live code (sandbox_win.cc:328). Refutation attempt: none found — the proposal already prices in the real risk (Google's repeated unshipped experiments = third-party injection friction) and stages it through a canary cycle. One improvement discovered during verification: upstream already ships a RendererAppContainerEnabled enterprise policy (browsertest + pref mapping), so affected users have a policy/registry off-switch even without a custom chrome://flags entry — mention it in the rollout notes. No Thorium/Slipstream overlap. Keep with the staged rollout as written."
+        }
+      },
+      {
+        "id": "SEC-EPD-07",
+        "title": "Block legacy DLL-injection extension points in sandboxed processes",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\sandbox\\policy\\features.cc"
+        ],
+        "change": "Flip sandbox::policy::features::kWinSboxDisableExtensionPoints ('WinSboxDisableExtensionPoint', sandbox/policy/features.cc:45-47) to FEATURE_ENABLED_BY_DEFAULT, applying sandbox::MITIGATION_EXTENSION_POINT_DISABLE (ProcessExtensionPointDisablePolicy) to sandboxed children.",
+        "benefit": "Stops legacy injection channels — AppInit DLLs, global hooks, legacy IMEs — from loading third-party DLLs into renderers and other sandboxed processes. Third-party DLL injection is a top real-world source of both crashes and sandbox-escape pivots; browser process is unaffected so legitimate shell/IME integration keeps working there.",
+        "risks": "Legacy IME users (some third-party East-Asian IMEs) could see input issues in web content if their IME relies on in-process hooks — modern TSF IMEs are unaffected because text input is composed in the browser process. One-line revert if reports surface.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None; marginally improves stability by keeping foreign DLLs out of renderers.",
+        "verdict": {
+          "id": "SEC-EPD-07",
+          "exists_at_pin": true,
+          "verdict": "modify",
+          "evidence": "D:\\src\\chromium\\src\\sandbox\\policy\\features.cc:45-47 ('WinSboxDisableExtensionPoint', DISABLED_BY_DEFAULT) exists as named, BUT sandbox/policy/win/sandbox_win.cc:479-485 already applies MITIGATION_EXTENSION_POINT_DISABLE unconditionally to sandboxed children; the feature's only consumer is chrome/browser/win/chrome_elf_init.cc:143-147, which sets the beacon regkey that makes chrome_elf apply the mitigation to the BROWSER process at next launch (chrome_elf/chrome_elf_security.cc:85-117 EarlyBrowserSecurity)",
+          "notes": "Mechanism is misdescribed — effectively inverted. At this pin renderers and all sandboxed processes ALREADY get MITIGATION_EXTENSION_POINT_DISABLE via the default pre-startup mitigation set (sandbox_win.cc:481); flipping kWinSboxDisableExtensionPoints changes nothing for them. What the flip actually does: enables the browser-process extension-point lockdown via the chrome_elf beacon, guarded by (a) a legacy-IME auto-detect that declines when an IME HKL is present (chrome_elf_init.cc:94-107, EXTENSIONPOINT_DISABLED_IME), and (b) the kBlockBrowserLegacyExtensionPoints enterprise policy (:109-117). So the proposal's 'browser process is unaffected so shell/IME integration keeps working there' is exactly backwards, and its stated IME risk is already auto-mitigated by (a). The flip is still worth shipping — the browser process is precisely where AV/shell-hook DLLs inject — but rewrite the benefit/risk text: 'browser-process legacy-injection lockdown, IME heuristic auto-opt-out, policy override, takes effect on second launch'. Same one-line change, corrected story."
+        }
+      },
+      {
+        "id": "SEC-LOADEXT-08",
+        "title": "Gate --load-extension behind the chrome://extensions developer-mode toggle",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\chrome\\browser\\extensions\\extension_service.cc",
+          "D:\\src\\chromium\\src\\extensions\\common\\extension_features.cc",
+          "D:\\src\\chromium\\src\\extensions\\common\\feature_switch.cc"
+        ],
+        "change": "Small patch in ExtensionService::LoadExtensionsFromCommandLineFlag (chrome/browser/extensions/extension_service.cc:412-448): in the kLoadExtension branch (which currently, in non-Google branding, only blocks for ESB users and the ExtensionInstallTypeBlocklist policy, :422-440), add an early return unless the profile's developer-mode pref (prefs::kExtensionsUIDeveloperMode, already consulted via feature_developer_mode_only.h in this file) is true, logging a warning. Do NOT adopt Google's outright removal (the GOOGLE_CHROME_BRANDING branch at :422-425) — developers keep the workflow by enabling dev mode once. Leave --disable-extensions-except alone (kDisableDisableExtensionsExceptCommandLineSwitch stays default-off for non-branded, extension_features.cc:198-204). Leave external-install surfaces untouched: registry/prefs external extensions already require a user prompt on Windows (prompt_for_external_extensions DEFAULT_ENABLED, feature_switch.cc:22-27), and enterprise ExtensionInstallForcelist policy loading is a separate path this patch never touches.",
+        "benefit": "Kills the classic Windows malware move — appending --load-extension=<dropped dir> to browser shortcuts — for the default population (dev mode off), while keeping CWS as the sole zero-friction install channel. Complements SEC-CONF-02 (conf-file flag injection) and SEC-BADFLAG-03 (warning restoration).",
+        "risks": "Selenium/Puppeteer-style tooling that sideloads helper extensions via --load-extension against a fresh profile breaks until dev mode is set (document: enable dev mode or use --user-data-dir with the pref pre-seeded). ~10-line patch against a file Google churns moderately; anchor on the switch-name constants to keep rebases trivial.",
+        "cws_impact": "None. webstorePrivate, CRX verification, auto-update, and the preinstalled-uBO external-provider path are all unaffected.",
+        "pillar_conflicts": "None.",
+        "verdict": {
+          "id": "SEC-LOADEXT-08",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\chromium\\src\\chrome\\browser\\extensions\\extension_service.cc:412-448 LoadExtensionsFromCommandLineFlag — GOOGLE_CHROME_BRANDING hard-block :422-425, ESB block :427-431, ExtensionInstallTypeBlocklist block :432-439; file already includes extensions/common/features/feature_developer_mode_only.h (:114) and reads prefs::kExtensionsUIDeveloperMode (:295, :299); extensions/common/extension_features.cc:198-204 kDisableDisableExtensionsExceptCommandLineSwitch branded-only default; extensions/common/feature_switch.cc:22-27 prompt_for_external_extensions DEFAULT_ENABLED on Windows",
+          "notes": "Every line reference and both leave-alone claims verified at the pin. The dev-mode pref is already consulted in this exact file, so the patch anchor is real and the ~10-line estimate credible. External-install prompt and forcelist paths confirmed untouched. Residual honest risk beyond the proposal's: upstream is actively migrating ExtensionService responsibilities to ExtensionRegistrar, so this function may move across a future tag bump — anchor the patch on the switch-name constants as proposed and expect an occasional trivial re-home. CWS constraint untouched (hard constraint 1 satisfied). Keep."
+        }
+      },
+      {
+        "id": "SEC-BLINK-09",
+        "title": "Re-flip two Blink defaults Thorium weakened: MIDI blocking and filesystem: URL navigation",
+        "mechanism": "feature_flip",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\third_party\\blink\\common\\features.cc",
+          "D:\\src\\slipstream\\third_party\\thorium\\other\\thorium-blink-feature-defaults.patch"
+        ],
+        "change": "In a stage-90 patch applied after Thorium's series, restore in third_party/blink/common/features.cc: kBlockMidiByDefault back to FEATURE_ENABLED_BY_DEFAULT (Thorium set it DISABLED at :103 'Allow MIDI for Thorium Legacy') and kFileSystemUrlNavigation back to FEATURE_DISABLED_BY_DEFAULT (Thorium enabled it, :820). Keep the rest of thorium-blink-feature-defaults.patch — its BrowsingTopics disables are privacy-positive and stay.",
+        "benefit": "kBlockMidiByDefault=enabled gates ALL Web MIDI access (not just SysEx) behind the permission prompt — upstream's default since M124, closing a drive-by fingerprinting/hardware-poking surface. kFileSystemUrlNavigation=disabled restores upstream's removal of navigations to filesystem: URLs, a surface that was repeatedly abused for XSS-style payload hosting and was default-disabled upstream years ago.",
+        "risks": "Legacy web-MIDI apps prompt for permission (that is stock Chrome behavior — parity, not regression). filesystem: navigation is dead upstream, so site breakage is effectively nil. Same-file patch conflict with Thorium's is handled by series ordering (ours applies later).",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Deviates from Thorium's 'legacy web compatibility' stance; aligned with our SECURE pillar.",
+        "verdict": {
+          "id": "SEC-BLINK-09",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\chromium\\src\\third_party\\blink\\common\\features.cc:103 kBlockMidiByDefault FEATURE_DISABLED_BY_DEFAULT with Thorium comment 'Allow MIDI for Thorium Legacy' (:102); :820 kFileSystemUrlNavigation FEATURE_ENABLED_BY_DEFAULT; Thorium's other/thorium-blink-feature-defaults.patch hunks confirm upstream defaults were ENABLED (midi block) and DISABLED (filesystem nav) before Thorium flipped both",
+          "notes": "Both Thorium weakenings confirmed in the applied tree, and the patch file itself proves the upstream defaults the proposal wants restored. Keeping the patch's BrowsingTopics disables (verified present in the same patch) while overriding only these two via stage-90 ordering is the lowest-rebase-cost mechanism — excluding the whole Thorium patch would lose the privacy-positive parts. Web MIDI permission-prompt parity with stock Chrome, and filesystem: navigation has been dead upstream for years, so breakage claims hold. Keep."
+        }
+      },
+      {
+        "id": "SEC-FTP-10",
+        "title": "Exclude ftp-support-thorium.patch — drop the resurrected FTP client",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\slipstream\\third_party\\thorium\\other\\ftp-support-thorium.patch",
+          "D:\\src\\slipstream\\patches\\thorium_exclusions.txt"
+        ],
+        "change": "Add 'other/ftp-support-thorium.patch' to patches/thorium_exclusions.txt (5,496-line patch reviving the ftp:// scheme and client that upstream deleted in M95). Verify no later Thorium patch in the 50/70 stages depends on its symbols before shipping (apply-order dry run).",
+        "benefit": "Removes a large, unmaintained, plaintext-protocol parsing stack from the network service — code that gets zero upstream security attention since 2021 and re-adds a URL scheme that phishing kits exploited historically. Also the single biggest rebase-debt item in the accepted series (5.5k lines) and a binary-size save, serving the debloat ethos.",
+        "risks": "Feature regression vs Thorium: ftp:// links stop working (users needing FTP use a dedicated client). This is a product-identity call — if FTP is deemed a keep-for-parity feature, the fallback position is to document it as accepted attack surface in SECURITY.md; there is no cheap middle ground.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "Thorium feature parity (the headline conflict); positive for MEMORY (smaller binary) and maintainer budget.",
+        "verdict": {
+          "id": "SEC-FTP-10",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\slipstream\\third_party\\thorium\\other\\ftp-support-thorium.patch — exactly 5,496 lines (wc -l), in Thorium series line 89; dependency sweep: the only other kept patch referencing FTP symbols is enable-saving-pages-from-all-schemes.patch (+url::kFtpScheme), and url::kFtpScheme is stock upstream (url/url_constants.h:39), independent of the FTP patch",
+          "notes": "Size claim exact. I performed the cross-patch dependency check the proposal deferred: grep across other/*.patch finds ftp only in the already-excluded disable-download-quarantine.patch, the Linux packaging patch (irrelevant), the LLVM toolchain patch (URL string), and enable-saving-pages-from-all-schemes.patch — whose url::kFtpScheme reference resolves against stock url_constants.h, so exclusion does not break symbols. Still run the apply-order dry run for hunk-context drift as proposed. Unmaintained plaintext-protocol parser out of the network service + 5.5k lines off the rebase budget; the product-identity tradeoff is honestly framed. Keep."
+        }
+      },
+      {
+        "id": "SEC-V8SBX-11",
+        "title": "Pin v8_enable_sandbox = true in the distribution GN config",
+        "mechanism": "gn_arg",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\v8\\BUILD.gn",
+          "D:\\src\\slipstream\\config\\win_x64_avx2.gn"
+        ],
+        "change": "Add 'v8_enable_sandbox = true' to config/win_x64_avx2.gn. Verified state at this pin: the arg is declared at v8/BUILD.gn:378-380 (default \"\") and derived at :730-737 to pointer_compression_shared_cage && external_code_space && !fuchsia — TRUE for our x64 Windows config, and no Thorium patch touches pointer compression, external code space, sandbox flags, or jitless (grep across the series returns nothing). Explicitly setting it converts a derived-on into an asserted-on: if a future tag bump or profile tweak (e.g. any experiment touching pointer compression) would silently disable the V8 sandbox, GN now either honors the pin or errors at gen time.",
+        "benefit": "The V8 sandbox is the primary post-exploit containment for JS engine bugs (heap corruption confined to the sandbox cage). Zero behavior change today; permanent insurance against silent regression across rebases — exactly the class of drift a solo maintainer will not catch by eye. Keeps Maglev/TurboFan/PGO untouched: this is the pro-JIT answer to the perf constraint, not a JIT restriction.",
+        "risks": "None at this pin (arg exists, value matches derived default). If V8 ever renames the arg, gn gen fails loudly — which is the point.",
+        "cws_impact": "None.",
+        "pillar_conflicts": "None. FAST unaffected (sandbox is on today; this only pins it).",
+        "verdict": {
+          "id": "SEC-V8SBX-11",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\chromium\\src\\v8\\BUILD.gn:380 v8_enable_sandbox declared in declare_args() default \"\"; :730-737 derived to v8_enable_pointer_compression_shared_cage && v8_enable_external_code_space && target_os != \"fuchsia\"; guard asserts at :846-853 (sandbox requires external code space / safe libcxx) make an inconsistent pin fail at gen time; D:\\src\\slipstream\\config\\win_x64_avx2.gn currently lacks the arg",
+          "notes": "Declaration and derivation verified exactly as claimed (declaration at :380, comment block starting :378). Grep across Thorium's other/*.patch finds nothing touching pointer compression, external code space, sandbox flags, or jitless — so the pin asserts today's derived-true value. The 'fails loudly' claim is structurally correct: an explicit true either satisfies or trips the v8 asserts/gen error rather than silently degrading. Zero behavior/perf change today, pure drift insurance, one line in the GN file Slipstream already owns. Cheapest item in the set. Keep."
+        }
+      },
+      {
+        "id": "SEC-CV-12",
+        "title": "Enforce extension content verification for CWS-installed extensions",
+        "mechanism": "patch",
+        "evidence_files": [
+          "D:\\src\\chromium\\src\\chrome\\browser\\extensions\\chrome_content_verifier_delegate.cc"
+        ],
+        "change": "Small patch to ChromeContentVerifierDelegate::GetDefaultMode (chrome/browser/extensions/chrome_content_verifier_delegate.cc:94-156): the non-Google-branded default is VerifyInfo::Mode::NONE (:108-110); change it to ENFORCE (start with BOOTSTRAP for one pre-release cycle to observe false positives, then promote). This applies only to webstore-installed extensions (VerifyInfo.is_from_webstore); unpacked/dev extensions are exempt by design.",
+        "benefit": "Chrome's content-verification system detects on-disk tampering of installed extension files (a favorite persistence trick: quietly editing an installed ad blocker or wallet extension's JS in the profile directory) and auto-repairs from CWS. In our keyless build it is currently completely OFF — this closes the gap using signed verified_contents.json hashes that ship inside CWS CRXs and are re-fetchable from the unauthenticated CWS update endpoint (no API key involved).",
+        "risks": "False-positive 'extension corrupted' disables would hit real users — hence the BOOTSTRAP burn-in, and validate explicitly against the preinstalled MV2 uBO classic (delisted CRX must still carry/serve verified contents; if it fails verification, allowlist the preinstall path or stay at BOOTSTRAP). Malware that can edit command lines cannot downgrade the mode (std::max logic at :152-155 keeps the stricter value). ~5-line patch in a slow-churn file.",
+        "cws_impact": "Positive interaction — verification hashes come from CWS itself. Smoke test: install several CWS extensions incl. uBO Lite + preinstalled uBO classic, corrupt one byte of a content script on disk, confirm detect/repair rather than mass false disables.",
+        "pillar_conflicts": "Negligible I/O for hash checks on extension load; no page-load impact.",
+        "verdict": {
+          "id": "SEC-CV-12",
+          "exists_at_pin": true,
+          "verdict": "keep",
+          "evidence": "D:\\src\\chromium\\src\\chrome\\browser\\extensions\\chrome_content_verifier_delegate.cc:94-156 GetDefaultMode — non-branded default VerifyInfo::Mode::NONE at :106-110, std::max anti-downgrade at :152-155; signature fetch needs no API key: GetSignatureFetchUrl (:187-204) hits extension_urls::GetWebstoreUpdateUrl() with query params only, verified against the hard-coded kWebstoreSignaturesPublicKey (:184)",
+          "notes": "Mechanism verified line-for-line, and I confirmed the keyless claim in code: verified_contents fetch uses the same unauthenticated CWS update endpoint Slipstream already depends on for CRX auto-update (per DECISIONS.md keyless posture), with signatures checked against a compiled-in webstore public key — no Google API key anywhere in the path. With 90-neuter-variations.patch the field-trial branch (:111-120) never fires, so patching the #else default is the correct and only lever. The BOOTSTRAP burn-in plus explicit validation of the delisted MV2 uBO preinstall is the right guard against the one real failure mode (mass false 'corrupted' disables). ~5-line patch, slow-churn file, CWS-positive. Keep."
+        }
+      }
+    ],
+    "dropped": []
+  }
+]

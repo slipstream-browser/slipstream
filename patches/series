@@ -1,15 +1,35 @@
 # Slipstream stage-90 patch series — applied AFTER Thorium's series and the
-# Slipstream overlay, in this order. Format matches Thorium's series file:
-#   <patch path relative to repo root>
+# Slipstream overlay, in this order. Format matches Thorium's series file.
 # One patch per line; blank lines and # comments ignored.
 #
-# v0.0: intentionally empty — first gate is an unmodified stock Thorium build.
-# v0.1 adds (one at a time, green rebuild between each):
+# v0.0: intentionally empty — first gate was the stock Thorium build (passed).
+#
+# v0.1 plan (docs/PILLARS.md sections C+D — add ONE at a time, green rebuild
+# between each; #16-21 default-on, #22-25 land but gate-promote via nightly):
 #   patches/90-force-metrics-off.patch
 #   patches/90-disable-crash-upload.patch
 #   patches/90-neuter-variations.patch
 #   patches/90-trim-component-updater.patch
 #   patches/90-disable-optimization-guide-fetch.patch
 #   patches/90-remove-promo-surfaces.patch
-#   patches/90-default-prefs-hardening.patch
-#   patches/90-trim-preinstalled-extensions.patch  (keep uBO, drop Adobe/partner preinstalls)
+#   patches/90-trim-preinstalled-extensions.patch   (keep uBO, drop Adobe/partner)
+#   patches/90-default-prefs-hardening.patch        (+MemorySaver on, 3P cookies
+#       blocked, WebRTC public-iface-only [REQUIRED, C2], no link auditing,
+#       leak-detection off, idle-detection BLOCK, sensors BLOCK)
+#   patches/90-memory-feature-defaults.patch        (MEM-02/03/04/06)
+#   patches/90-privacy-feature-defaults.patch       (PRIV-09 autofill crowdsourcing,
+#       PRIV-10 network-time off)
+#   patches/90-security-feature-defaults.patch      (SEC-HFM-01 HTTPS-First balanced,
+#       SEC-EPD-07 extension-point lockdown w/ corrected rationale)
+#   patches/90-restore-blink-secure-defaults.patch  (SEC-BLINK-09: MIDI block,
+#       filesystem: nav off — re-flips Thorium weakenings)
+#   patches/90-battery-status-desktop-constant.patch (PRIV-07)
+#   patches/90-gate-load-extension-devmode.patch    (SEC-LOADEXT-08)
+# nightly burn-in (promote on gates in docs/PILLARS.md):
+#   patches/90-network-service-sandbox.patch        (SEC-NETSBX-05)
+#   patches/90-extension-content-verification.patch (SEC-CV-12: NONE->BOOTSTRAP->ENFORCE)
+#   patches/90-enable-elevation-service.patch       (SEC-ABE-04; blocked on
+#       "why did Thorium guard it" investigation)
+#   patches/90-renderer-appcontainer.patch          (SEC-RAC-06, canary tag only)
+# v0.2 candidate:
+#   patches/90-infinite-tabs-freezing.patch         (MEM-05, after soak)

@@ -19,6 +19,21 @@ other/enable-whats-new-by-default.patch
 # Anti-debloat: Thorium turns Chrome Labs ON by default.
 other/enable-chrome-labs-by-default.patch
 
+# SECURITY-NEGATIVE (pillar audit 2026-08-30, docs/PILLARS.md B):
+# Appends arbitrary switches from a user-writable %APPDATA% conf file into
+# the browser command line — a no-admin persistence/desandbox vector.
+other/windows-thorium-flags-conf.patch
+
+# SECURITY-NEGATIVE: suppresses Chromium's warning infobar for dangerous
+# flags (part of the anti-tamper trio with the conf exclusion above and the
+# --load-extension devmode gate patch).
+other/relax-bad-flags-warning.patch
+
+# SECURITY: resurrects the FTP client Chromium removed (unmaintained,
+# plaintext protocol, expanded attack surface). Product-identity call:
+# Slipstream does not ship FTP. Run apply-order dry run on each rebase.
+other/ftp-support-thorium.patch
+
 # INSPECTED 2026-08-30 — KEPT (not excluded). disable-encryption.patch only
 # adds OPT-IN switches (--disable-encryption, --disable-machine-id,
 # --revert-from-portable); defaults are unchanged and DPAPI stays on. It is

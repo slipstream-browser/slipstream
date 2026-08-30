@@ -27,3 +27,22 @@ properties most likely to silently regress (CWS + zero-telemetry) — never skip
    no installer registry writes.
 10. One MV3 service-worker extension functions (regression check for
     `enable_background_contents=false`).
+
+## Pillar-design additions (docs/PILLARS.md)
+
+11. **WebRTC ICE-candidate leak check** (C2 invariant gate): local-IP
+    concealment holds — no private IPs in candidates (offline harness or
+    browserleaks-equivalent page).
+12. Extension auto-update + uBO filter-list fetch succeed **while Memory
+    Saver has discarded tabs** (and nightly: while commit-limit discard is
+    active).
+13. Idle capture (item 5) additionally asserts zero requests to
+    `clients2.google.com/time`.
+14. Nightly, once network-service sandbox lands: proxy-auth, captive portal,
+    uBO list fetch, CWS install, component update — all under the sandboxed
+    network service.
+15. Nightly, once content verification is at BOOTSTRAP/ENFORCE: corrupt-byte
+    detect/repair test; delisted-MV2 uBO preinstall still passes verification.
+16. Nightly, once elevation service lands: `sc qc` shows the service, ABE
+    CLSID resolves, app-bound key blob present, v20 cookies decrypt;
+    per-user install negative test (stays DPAPI v10).

@@ -35,6 +35,27 @@ no search suggest, DoH secure, no UKM).
 - Windows download quarantine / MotW.
 - `chrome://net-internals`, `chrome://policy` (support tooling).
 
+## Pillar design (2026-08-30)
+
+The memory/privacy/security feature set is specified in `docs/PILLARS.md`
+(verified implementation plan) and `docs/pillar-proposals.json` (evidence).
+
+**Known FAST costs, accepted deliberately** (PILLARS.md C6/C7):
+- Purge-on-freeze also purges bfcache pages → back-navigations rebuild caches.
+- Default-search renderer no longer pinned alive → tens of ms on first search
+  after process death (masked by network; search-suggest is off anyway).
+
+**Deliberately KEPT despite memory cost** (security wins):
+- Strict site isolation, BackupRefPtr/MiraclePtr
+  (build_overrides/partition_alloc.gni), the warm spare renderer,
+  Blink's strong memory cache (pressure-purged instead).
+
+**Power-user memory opt-in** (documented, never default): add
+`--process-per-site` to a shortcut to merge same-site tabs into one process.
+Caveats: bigger crash blast radius, coarser tab discarding. The shipped
+default already includes upstream's bounded same-site reuse
+(kProcessPerSiteUpToMainFrameThreshold: 2 frames / 2 GB cap).
+
 ## Verification per release
 
 10-minute idle capture must show **zero** requests to UMA/variations/
