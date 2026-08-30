@@ -1,0 +1,3 @@
+[submodule "third_party/thorium"]
+	path = third_party/thorium
+	url = https://github.com/gz83/thorium.git
