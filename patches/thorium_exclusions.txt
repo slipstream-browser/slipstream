@@ -19,6 +19,9 @@ other/enable-whats-new-by-default.patch
 # Anti-debloat: Thorium turns Chrome Labs ON by default.
 other/enable-chrome-labs-by-default.patch
 
-# PENDING INSPECTION before v0.1: if this weakens profile/cookie encryption
-# (DPAPI/app-bound), exclude it permanently; if it is something else, document.
-# other/disable-encryption.patch
+# INSPECTED 2026-08-30 — KEPT (not excluded). disable-encryption.patch only
+# adds OPT-IN switches (--disable-encryption, --disable-machine-id,
+# --revert-from-portable); defaults are unchanged and DPAPI stays on. It is
+# what makes portable-zip profiles survive machine moves. Documented in
+# docs/SECURITY.md: portable mode with these flags stores credentials
+# unencrypted on disk.
