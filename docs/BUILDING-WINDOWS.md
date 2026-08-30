@@ -61,3 +61,9 @@ extension from the Chrome Web Store.
   `use_siso=false` + `gn clean` if you need classic ninja determinism.
 - Never run VMs/containers/games during the final link.
 - Record exact `cl.exe`/SDK versions here per release.
+- Set `PYTHONNOUSERSITE=1` for the build. If anything is `pip install --user`ed
+  on the machine (e.g. Pillow for `make-icons.py`), setuptools'
+  `distutils-precedence.pth` enumerates the user site-packages on every Python
+  startup; 22 parallel build actions racing on it can throw
+  `WinError 1450 (insufficient system resources)`. The build needs no user
+  packages. `scripts/build.ps1` and the release wrapper set this.

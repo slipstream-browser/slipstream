@@ -6,6 +6,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\env.ps1"
+$env:PYTHONNOUSERSITE = '1'  # isolate build Python from --user site-packages (see docs/BUILDING-WINDOWS.md)
 Set-Location $env:CR_DIR
 
 if (-not $ArgsFile) { $ArgsFile = "$env:SLIP_DIR\config\win_x64_avx2.gn" }
