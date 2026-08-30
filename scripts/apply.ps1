@@ -32,7 +32,7 @@ Set-Content $effectiveFile $effective
 Write-Output "Effective series: $($effective.Count) lines ($($exclusions.Count) exclusion rules)"
 
 py -3.11 "$env:THOR_DIR\patch_scripts\series\apply_series.py" `
-    --series $effectiveFile --root $env:THOR_DIR --chromium-src $env:CR_DIR
+    --thorium-root $env:THOR_DIR --source-tree $env:CR_DIR --series $effectiveFile --apply
 if ($LASTEXITCODE -ne 0) { throw "apply_series.py failed: $LASTEXITCODE" }
 
 # Thorium's post-patch string sync steps (mirror setup.py)
@@ -51,8 +51,9 @@ $slipSeries = Get-Content "$env:SLIP_DIR\patches\series" |
 if ($slipSeries) {
     $slipFile = "$env:TEMP\slipstream_own_series"
     Set-Content $slipFile $slipSeries
+    # --thorium-root points at OUR repo: series patch paths resolve against it
     py -3.11 "$env:THOR_DIR\patch_scripts\series\apply_series.py" `
-        --series $slipFile --root $env:SLIP_DIR --chromium-src $env:CR_DIR
+        --thorium-root $env:SLIP_DIR --source-tree $env:CR_DIR --series $slipFile --apply
     if ($LASTEXITCODE -ne 0) { throw "slipstream series failed: $LASTEXITCODE" }
 } else { Write-Output "(empty — nothing to apply yet)" }
 
