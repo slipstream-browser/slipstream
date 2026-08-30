@@ -1,0 +1,40 @@
+{
+  "product_name": "Slipstream",
+  "product_name_lower": "slipstream",
+  "product_name_upper": "SLIPSTREAM",
+  "company_name": "The Slipstream Browser Authors",
+  "reverse_dns": "org.slipstreambrowser.slipstream",
+  "exe_name": "slipstream.exe",
+  "user_data_dir": "Slipstream",
+  "registry_root": "Software\\Slipstream",
+  "app_user_model_id": "Slipstream",
+
+  "guids_PERMANENT_NEVER_CHANGE_AFTER_FIRST_PUBLIC_RELEASE": {
+    "browser_app_guid": "{CB543851-4002-4C3D-A06F-A5C7DEF178BF}",
+    "active_setup_guid": "{9A5DCA22-CEDA-4FDB-9DDB-9D42462DBC6A}",
+    "toast_activator_clsid": "{209EA79E-387A-4D35-BFFA-E20E014B4582}",
+    "elevator_clsid": "{A3886921-7254-47BC-97E7-28EE702B950B}",
+    "elevator_iid": "{0725683C-13B5-449F-A14B-13DD49F11B28}",
+    "tracing_service_clsid": "{9CBEC7BC-3A99-47A0-931E-36ACD5979717}"
+  },
+
+  "rebrand_pass": {
+    "allowlist_paths": ["chrome/", "components/", "content/shell/", "ui/", "build/", "google_apis/"],
+    "denylist_paths": ["third_party/", "chrome/test/", "testdata"],
+    "extensions": [".cc", ".h", ".mm", ".gn", ".gni", ".grd", ".grdp", ".xtb", ".json", ".ver", ".vsprops", ".py", ".rc", ".html", ".ts", ".js", ".css", ".plist", ".xml", ".in"],
+    "tokens": [
+      ["Thorium", "Slipstream"],
+      ["THORIUM", "SLIPSTREAM"],
+      ["thorium", "slipstream"]
+    ],
+    "preserve_identifiers": [
+      "thorium_x86_profile",
+      "thorium_all",
+      "thorium_installer",
+      "thorium_shell",
+      "thorium_ui_data",
+      "Alex313031"
+    ],
+    "never_touch_note": "The User-Agent Chrome/<major>.0.0.0 token must survive untouched — CWS gates on it. The pass must never rewrite files under extensions/common/ or the UA string builders."
+  }
+}

@@ -1,0 +1,24 @@
+# Thorium series patches that Slipstream SKIPS, one per line, matching the
+# entries in third_party/thorium/patch_scripts/series/series.
+# Rationale for each is recorded in docs/DECISIONS.md.
+
+# Hardcodes Google's shared public API key + client id/secret — ToS liability,
+# and CWS install/update need no keys at all. Slipstream ships keyless.
+other/thorium-default-api-keys.patch
+
+# SECURITY-NEGATIVE: disables Windows Mark-of-the-Web / Attachment Manager
+# quarantine on downloads. Unacceptable for a security-positioned browser.
+other/disable-download-quarantine.patch
+
+# SECURITY-NEGATIVE: re-enables insecure (HTTP-downgraded) downloads.
+other/allow-insecure-downloads.patch
+
+# Anti-debloat: Thorium turns the What's New page ON by default.
+other/enable-whats-new-by-default.patch
+
+# Anti-debloat: Thorium turns Chrome Labs ON by default.
+other/enable-chrome-labs-by-default.patch
+
+# PENDING INSPECTION before v0.1: if this weakens profile/cookie encryption
+# (DPAPI/app-bound), exclude it permanently; if it is something else, document.
+# other/disable-encryption.patch

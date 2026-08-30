@@ -1,0 +1,21 @@
+# Build outputs live in the Chromium tree (D:\src\chromium\src\out), never here.
+out/
+*.pyc
+__pycache__/
+*.profdata
+
+# Local-only secrets/keys (Safe Browsing personal key etc.) — never commit
+local_keys.gn
+*.local.gn
+
+# Editor/OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Generated artifacts
+dist/
+*.zip
+*.exe
+rebrand_manifest.json

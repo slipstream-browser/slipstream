@@ -1,0 +1,14 @@
+# Slipstream stage-90 patch series — applied AFTER Thorium's series and the
+# Slipstream overlay, in this order. Format matches Thorium's series file:
+#   <patch path relative to repo root>
+# One patch per line; blank lines and # comments ignored.
+#
+# v0.0: intentionally empty — first gate is an unmodified stock Thorium build.
+# v0.1 adds (one at a time, green rebuild between each):
+#   patches/90-force-metrics-off.patch
+#   patches/90-disable-crash-upload.patch
+#   patches/90-neuter-variations.patch
+#   patches/90-trim-component-updater.patch
+#   patches/90-disable-optimization-guide-fetch.patch
+#   patches/90-remove-promo-surfaces.patch
+#   patches/90-default-prefs-hardening.patch
