@@ -15,7 +15,9 @@
     "toast_activator_clsid": "{209EA79E-387A-4D35-BFFA-E20E014B4582}",
     "elevator_clsid": "{A3886921-7254-47BC-97E7-28EE702B950B}",
     "elevator_iid": "{0725683C-13B5-449F-A14B-13DD49F11B28}",
-    "tracing_service_clsid": "{9CBEC7BC-3A99-47A0-931E-36ACD5979717}"
+    "tracing_service_clsid": "{9CBEC7BC-3A99-47A0-931E-36ACD5979717}",
+    "tracing_service_iid": "{1B34AEC8-FB17-4FF1-B1AE-13DF48103165}",
+    "sandbox_sid_prefix": "S-1-15-2-1467491282-1195051149-1474757959-1724399613-2116858157-1332199264-1687040722-"
   },
 
   "rebrand_pass": {

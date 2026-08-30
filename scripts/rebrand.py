@@ -68,10 +68,17 @@ def replace_lower(text: str, old: str, new: str) -> str:
         end = j + len(old)
         before = text[j - 1] if j > 0 else ""
         after = text[end] if end < n else ""
+        # Keep lowercase "thorium" when it is part of a code identifier
+        # (glued to _), a path segment (adjacent to a / or \ separator), or a
+        # file reference (followed by a known source/asset suffix). Renaming
+        # any of those without also renaming the real file/dir/symbol breaks
+        # the build — e.g. the `components/vector_icons/thorium/` icon dir,
+        # which is referenced by path in BUILD.gn but never actually renamed.
         glued_ident = before == "_" or after == "_"
+        path_seg = before in "/\\" or after in "/\\"
         is_src_ref = bool(SRC_FILE_SUFFIX.match(text[end : end + 5]))
-        if glued_ident or is_src_ref:
-            out.append(old)  # part of an identifier or file reference — keep
+        if glued_ident or path_seg or is_src_ref:
+            out.append(old)  # identifier, path segment, or file reference — keep
         else:
             out.append(new)
         idx = end

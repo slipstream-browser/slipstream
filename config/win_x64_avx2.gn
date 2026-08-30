@@ -71,11 +71,16 @@ thin_lto_enable_optimizations = true
 enable_rust = true
 chrome_pgo_phase = 2
 
-# [SLIP] additions — verify each exists in the pinned milestone via
-# docs/gn_all_args.txt before every release (the GN arg surface churns)
-enable_background_mode = false
-enable_background_contents = false
-enable_service_discovery = false
+# [SLIP] additions -- verify each exists in the pinned milestone via
+# docs/gn_all_args.txt before every release (the GN arg surface churns).
+#
+# NOTE (gn-gen gate, M152): enable_background_mode/enable_background_contents
+# are REQUIRED whenever extensions are enabled -- chrome/browser/background/
+# extensions/BUILD.gn asserts enable_background_mode, and extensions are our
+# hard requirement (CWS). They CANNOT be compiled out at M152 without breaking
+# the extension system. Removed. enable_service_discovery is derived from
+# enable_mdns (features.gni: enable_service_discovery = enable_mdns), so we set
+# only enable_mdns below and never set enable_service_discovery directly.
 
 # INVARIANT (docs/PILLARS.md C2): enable_mdns=false compiles out the mDNS
 # responder that conceals local IPs in WebRTC ICE candidates. It is only
