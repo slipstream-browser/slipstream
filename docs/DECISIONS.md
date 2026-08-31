@@ -32,6 +32,28 @@ dated entry, not an edit.
 | CWS serves the browser normally; uBO Lite installed by hand; **uBO classic auto-preinstalled from CWS on new profile** (verified in test profile) | Keep Thorium's `preinstall-ublock-origin.patch`. Google's CRX service still serves the delisted MV2 package (2026-08-30). Fallback if that ever stops: swap the ID to uBO Lite (`ddkjiahejlhfcafbddmgiahcphecmpfh`). Nothing is bundled in the installer → no GPL redistribution obligations. |
 | **Chromium's own hard-coded preinstall list also installed an Adobe Acrobat extension** (`efaidnbmnnnibpcajpcglclefindmkaj`) in the test profile | Bloat. New stage-90 patch planned: `90-trim-preinstalled-extensions.patch` — clear Chromium's partner preinstalls, keep only uBO. |
 
+## 2026-08-30 — first branded build (v0.1.0-dev)
+
+`slipstream.exe` built, launches, loads the Chrome Web Store, preinstalls
+uBlock Origin. PE resource reads Slipstream / The Slipstream Browser Authors.
+Artifacts: 186 MB installer + 552 MB portable zip.
+
+Config couplings discovered by building (each cost a partial build; all now
+documented so they never recur):
+
+| Coupling | Resolution |
+|---|---|
+| `enable_background_mode=false` + extensions | Impossible: `chrome/browser/background/extensions/BUILD.gn` asserts it and is built whenever extensions are on. Flag dropped (caught at `gn gen`). |
+| `enable_cdm_storage_id=true` + `enable_rlz=false` | `cdm_storage_id.cc` hard-errors "RLZ must be enabled on Windows/Mac". Disabled CDM storage ID; privacy wins, Widevine L3 unaffected. |
+| Windows exe output name | Thorium writes `initialexe/thorium` and mini_installer consumes `$root_out_dir/thorium.exe` — both path-glued, so the rebrand pass correctly skips them. Fixed by `patches/90-windows-exe-output-name.patch` (6 refs, 2 files). |
+| `--user` site-packages + 22 parallel build actions | `WinError 1450`; build now sets `PYTHONNOUSERSITE=1`. |
+
+Rebrand-pass rule learned the hard way: replace a token **only as a standalone
+word**. Renaming anything glued to an identifier char, a path separator, or a
+file suffix breaks the build, because those symbols/dirs are defined outside
+the allowlist (`base/`, `content/`, `components/vector_icons/thorium/`) and
+referenced inside it.
+
 ## 2026-08-30 — pillar design (memory / privacy / security)
 
 Product pillars set by Matt: **fast, memory-optimized, privacy-first, secure.**

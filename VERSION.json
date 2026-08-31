@@ -1,5 +1,5 @@
 {
-  "product": "0.0.0-dev",
+  "product": "0.1.0-dev",
   "chromium": "152.0.7977.55",
   "thorium_tag": "M152.0.7977.55",
   "cpu_target": "x64_avx2"
