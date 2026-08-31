@@ -1,0 +1,11 @@
+--- a/content/public/common/url_constants.h
++++ b/content/public/common/url_constants.h
+@@ -21,7 +21,7 @@
+ inline constexpr char kChromeUIScheme[] = "chrome";  // Used for WebUIs.
+ // User-facing Thorium alias for `kChromeUIScheme`. Navigations are
+ // canonicalized to `chrome://` before WebUI loading.
+-inline constexpr char kThoriumUIScheme[] = "thorium";
++inline constexpr char kThoriumUIScheme[] = "slipstream";
+ inline constexpr char kChromeNativeScheme[] = "chrome-native";
+ inline constexpr char kChromeUIUntrustedScheme[] = "chrome-untrusted";
+ inline constexpr char kViewSourceScheme[] = "view-source";

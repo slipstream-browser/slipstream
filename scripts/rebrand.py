@@ -22,6 +22,7 @@ Usage:
       --brand D:/src/slipstream/branding/brand.json [--dry-run]
 """
 import argparse
+import io
 import json
 import re
 import sys
@@ -125,7 +126,10 @@ def main() -> int:
                 continue
             scanned += 1
             try:
-                text = f.read_text(encoding="utf-8")
+                # newline="" preserves CRLF; the pass must not rewrite line
+                # endings of 600 files (noise in diffs and future rebases).
+                with io.open(f, encoding="utf-8", newline="") as fh:
+                    text = fh.read()
             except (UnicodeDecodeError, OSError):
                 continue
             if "thorium" not in text.lower():
@@ -137,12 +141,17 @@ def main() -> int:
             for ph, ident in restore.items():
                 text = text.replace(ph, ident)
             if text != orig:
+                # Count REAL replacements (new-token delta), not raw token
+                # occurrences -- the pass deliberately skips identifiers, path
+                # segments and file refs, so counting those inflated the
+                # manifest up to 65x and made it useless for scope review.
                 count = sum(
-                    orig.count(o) for o, _ in tokens
+                    text.count(new) - orig.count(new) for _, new in tokens
                 )
                 manifest[rel.replace("\\", "/")] = count
                 if not args.dry_run:
-                    f.write_text(text, encoding="utf-8", newline="")
+                    with io.open(f, "w", encoding="utf-8", newline="") as fh:
+                        fh.write(text)
 
     out = src / "out"
     out.mkdir(exist_ok=True)

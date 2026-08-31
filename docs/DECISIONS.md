@@ -15,7 +15,7 @@ dated entry, not an edit.
 | Chrome Web Store | Fully preserved — `webstorePrivate` API, `extension_urls.cc`, CRX3 verification, extension auto-updater, `Chrome/<major>.0.0.0` UA token all untouched | Core product requirement. The ungoogled-chromium patches that strip these are explicitly NOT imported. |
 | Safe Browsing | Compiled in (`safe_browsing_mode=1`) but inert without a key; documented honestly | Stripping it (`=0`) forecloses the option; shipping Google's key is prohibited. Practical protection = Windows SmartScreen + preinstalled uBlock Origin (Thorium patch kept). Personal builds MAY inject a private key via git-ignored `local_keys.gn`. |
 | Widevine | `bundle_widevine_cdm=false`; component updater fetches CDM at runtime | Redistributing the CDM requires a Widevine license agreement we don't have. Runtime fetch keeps Netflix/Spotify working with a clean legal posture. |
-| FFmpeg | `is_component_ffmpeg=true` | FFmpeg is LGPL-2.1+; a separate replaceable ffmpeg.dll is the clean LGPL §6 posture (Thorium statically links it). |
+| FFmpeg | ~~`is_component_ffmpeg=true`~~ **SUPERSEDED 2026-08-31 → `false`** (see postmortem below) | Original rationale: LGPL §6 separate-DLL posture. Reversed: in a static build it makes ffmpeg.dll a load-time import that renderer Code Integrity Guard blocks, killing every renderer. LGPL is satisfied by published pinned sources + build instructions instead. |
 | Security-negative Thorium patches | Excluded: `disable-download-quarantine` (kills MotW), `allow-insecure-downloads` | A security-positioned browser does not silently disable OS download quarantine. |
 | `disable-encryption.patch` | **Kept** (inspected 2026-08-30) | Adds opt-in switches only (`--disable-encryption`, `--disable-machine-id`, `--revert-from-portable`); defaults unchanged, DPAPI stays on. Enables truly portable profiles. Documented: portable mode with these flags stores credentials unencrypted. |
 | CPU target | AVX2 (`thorium_x86_profile = "avx2_fma"`) only, for distribution | Haswell/Zen1+ floor, matches Thorium's main channel. AVX-512 gets one benchmark experiment, not a maintained channel (PGO profile is generic; community-measured gains are low single digits; each channel doubles build time). |
@@ -53,6 +53,65 @@ word**. Renaming anything glued to an identifier char, a path separator, or a
 file suffix breaks the build, because those symbols/dirs are defined outside
 the allowlist (`base/`, `content/`, `components/vector_icons/thorium/`) and
 referenced inside it.
+
+## 2026-08-31 — POSTMORTEM: the blank-browser bug (v0.1.0-dev)
+
+**Symptom reported:** "uBlock Origin has crashed."
+**Actual fault:** every renderer process in the branded build died ~21ms after
+launch with exit code 7. The browser rendered *nothing* — uBO's crash balloon
+was simply the loudest symptom. Found by a 5-angle parallel investigation with a
+stock-vs-branded A/B; root cause proven from PE import tables + Windows
+CodeIntegrity event 3033 + source, not inference.
+
+**Root cause — ours, not upstream.** `is_component_ffmpeg = true` (added by us
+for a "clean LGPL posture") in a static `is_component_build = false` build makes
+`ffmpeg.dll` a **load-time import of chrome.dll** in the application directory.
+Renderers enforce Code Integrity Guard at process creation
+(`chrome_content_browser_client.cc` `PreSpawnChild`: `enforce_code_integrity =
+true` for `kRenderer`, unconditional in non-component builds). Only DLLs on that
+function's `AllowExtraDll` list are exempt — `chrome.dll` and `chrome_elf.dll`
+are; `ffmpeg.dll` was not. So `LoadLibraryExW(chrome.dll)` returned NULL in every
+renderer → `main_dll_loader_win.cc:257` → exit 7 (`MISSING_DATA`).
+
+| Fact | Evidence |
+|---|---|
+| 0 renderers branded vs 5-6 stock | process lists, `Target.getTargets` |
+| all renderers exit 7 | `CrashExitCodes.Renderer` histogram, bucket 7 = 100% |
+| ffmpeg.dll is the only import delta | PE import table: branded has it, stock doesn't |
+| the kernel blocked it | CodeIntegrity/Operational event 3033 x208 naming ffmpeg.dll |
+| sandbox is the gate | `--no-sandbox` on the same binary restores everything |
+
+**Fix:** `is_component_ffmpeg = false`. Zero cost to fast/memory/secure pillars;
+the only loss is the separate-DLL packaging posture — which was never a
+Windows-appropriate knob (`ffmpeg_options.gni` documents it as a convenience for
+Linux distro packagers). LGPL is satisfied instead by publishing pinned sources
+and complete build instructions, which this repo does by construction.
+
+**Lessons, now encoded as gates (docs/SMOKE.md):**
+1. *Feature tests are not liveness tests.* The old checklist would have "passed"
+   a browser that rendered nothing. Tier A liveness gates now run first and hard-stop.
+2. *`--no-sandbox` invalidates a test run.* It made the broken build look healthy.
+3. *This class of bug is invisible to Chromium's own diagnostics* — no Crashpad
+   dump, no error log. Only Windows CodeIntegrity 3033 and the shutdown
+   histograms record it. Both are now asserted.
+4. *Build-time invariants beat runtime discovery:* `scripts/check-imports.py`
+   turns this exact failure into a link-time error. Validated against both the
+   known-bad and known-good builds; wired into `scripts/build.ps1`.
+
+**Second real bug found and fixed in the same pass:** the internal URL scheme was
+renamed one-sidedly. `content/public/common/url_constants.h` (outside the rebrand
+allowlist) still said `"thorium"` while `chrome/` and `components/` emitted
+`slipstream://`, so Copy-URL produced links that could not be pasted back and
+`slipstream://version` never resolved. Unified on `slipstream` via
+`patches/90-internal-url-scheme.patch`. One-sided renames are the rebrand pass's
+characteristic failure mode — SMOKE.md gate B4 now scans for them.
+
+**Exonerated (do not re-investigate):** the MV2 restore patch, the uBO preinstall,
+the CWS pipeline, the rebrand pass itself, `use_on_device_model_service=false`
+(the pre-flagged suspect — a red herring), and the three pillar pins
+(`enable_backup_ref_ptr_support`, `v8_enable_sandbox`,
+`v8_enable_pointer_compression`), all verified no-ops via byte-identical
+buildflag headers and V8 snapshot blobs.
 
 ## 2026-08-30 — pillar design (memory / privacy / security)
 

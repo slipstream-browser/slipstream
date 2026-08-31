@@ -22,4 +22,12 @@ gn args $OutDir --list > "$env:SLIP_DIR\docs\gn_all_args.txt"
 # auto-clamps to one link job on this machine — exactly what we want.
 autoninja -C $OutDir thorium_all thorium_installer -j $Jobs
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+# GATE: chrome.dll must not statically import any app-directory DLL. Renderer
+# Code Integrity Guard blocks those, killing every renderer with exit code 7
+# (see scripts/check-imports.py). This bricked the first branded build.
+$chromeDll = Join-Path $env:CR_DIR "$OutDir\chrome.dll"
+py -3.11 "$env:SLIP_DIR\scripts\check-imports.py" $chromeDll
+if ($LASTEXITCODE -ne 0) { throw "import-table gate failed -- do not ship this build" }
+
 Write-Output "Build complete: $OutDir"

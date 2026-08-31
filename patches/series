@@ -12,6 +12,14 @@
 # not a token rule.
 patches/90-windows-exe-output-name.patch
 
+# Internal URL scheme unification. content/public/common/url_constants.h is the
+# authoritative definition of the Thorium-alias scheme and lives OUTSIDE the
+# rebrand allowlist, so it kept the value "thorium" while chrome/ and
+# components/ emitted "slipstream://" -- meaning Copy-URL produced links that
+# could not be pasted back, and slipstream://version never resolved. This flips
+# the one authoritative literal so all three sides agree.
+patches/90-internal-url-scheme.patch
+
 # v0.0: first gate was the stock Thorium build (passed).
 #
 # v0.1 plan (docs/PILLARS.md sections C+D — add ONE at a time, green rebuild

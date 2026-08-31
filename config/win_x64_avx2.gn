@@ -41,7 +41,12 @@ proprietary_codecs = true
 ffmpeg_branding = "Chrome"
 clang_use_chrome_plugins = true
 enable_ffmpeg_video_decoders = true
-is_component_ffmpeg = true      # [SLIP] was false — separate ffmpeg.dll, clean LGPL posture
+is_component_ffmpeg = false    # [SLIP] MUST equal is_component_build. true in a static build makes
+                                # ffmpeg.dll a load-time import of chrome.dll, which renderer Code
+                                # Integrity Guard blocks (chrome_content_browser_client.cc PreSpawnChild
+                                # AllowExtraDll list) -> EVERY renderer dies with exit code 7. This
+                                # bricked the first branded build. LGPL posture is satisfied instead by
+                                # publishing pinned sources + build instructions (see LICENSE).
 enable_library_cdms = true
 enable_widevine = true
 bundle_widevine_cdm = false     # [SLIP] was true — component updater fetches CDM at runtime
@@ -93,8 +98,11 @@ chrome_pgo_phase = 2
 # build. Revert PRIV-02 => revert this to true in the same commit.
 enable_mdns = false
 
-# [SLIP] pillar pins (docs/PILLARS.md section A) — assert-pins: these are
-# already the defaults for this config; pinning makes drift a gen-time error.
+# [SLIP] pillar pins (docs/PILLARS.md section A). VERIFIED 2026-08-31 to be
+# no-ops: all three already resolve true for this config (buildflags.h and the
+# V8 snapshot blobs are byte-identical to the stock build with/without them).
+# NOTE: setting a GN arg does NOT error on drift -- these document intent only.
+# Real drift detection belongs in the build-time gates (docs/SMOKE.md Tier 1).
 v8_enable_pointer_compression = true   # MEM-07 (v8/BUILD.gn)
 v8_enable_sandbox = true               # SEC-V8SBX-11
 enable_backup_ref_ptr_support = true   # MEM-08: security kept over ~memory cost
