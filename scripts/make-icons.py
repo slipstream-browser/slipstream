@@ -85,6 +85,22 @@ def main() -> int:
             at(px).save(THEME_DIR / f"product_logo_{px}.png")
             print(f"product_logo_{px}.png")
 
+        # Runtime favicon / WebUI logos: theme_resources.grd sources
+        # IDR_PRODUCT_LOGO_16 (the new-tab and chrome:// tab favicon) from the
+        # default_100_percent / default_200_percent trees -- NOT from THEME_DIR.
+        # Missing these left the Chromium pinwheel on every new tab.
+        for rel, px in [
+            ("default_100_percent/chromium/product_logo_16.png", 16),
+            ("default_100_percent/chromium/product_logo_32.png", 32),
+            ("default_100_percent/chromium/linux/product_logo_16.png", 16),
+            ("default_200_percent/chromium/product_logo_16.png", 32),
+            ("default_200_percent/chromium/product_logo_32.png", 64),
+        ]:
+            dst = THEME_DIR.parent / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            at(px).save(dst)
+            print(rel)
+
         frames = [at(px) for px in ICO_SIZES]
         for name in ("chromium.ico", "chromium_doc.ico", "chromium_pdf.ico",
                      "app_list.ico"):
