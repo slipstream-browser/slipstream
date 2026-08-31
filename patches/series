@@ -2,7 +2,17 @@
 # Slipstream overlay, in this order. Format matches Thorium's series file.
 # One patch per line; blank lines and # comments ignored.
 #
-# v0.0: intentionally empty — first gate was the stock Thorium build (passed).
+# Windows exe output name. Thorium's chrome/BUILD.gn writes the Windows
+# binary as "initialexe/thorium" and the reorder_imports action consumes
+# "initialexe/thorium.exe". Those are PATH-glued, so rebrand.py's
+# standalone-word rule correctly leaves them alone -- while the non-Windows
+# branch ("thorium" as a bare word) does get renamed. Result without this
+# patch: the exe builds as thorium.exe but reorder-imports.py looks for
+# slipstream.exe and the build dies at the very last step. Must stay a patch,
+# not a token rule.
+patches/90-windows-exe-output-name.patch
+
+# v0.0: first gate was the stock Thorium build (passed).
 #
 # v0.1 plan (docs/PILLARS.md sections C+D — add ONE at a time, green rebuild
 # between each; #16-21 default-on, #22-25 land but gate-promote via nightly):
