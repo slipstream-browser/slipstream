@@ -45,7 +45,11 @@ is_component_ffmpeg = true      # [SLIP] was false — separate ffmpeg.dll, clea
 enable_library_cdms = true
 enable_widevine = true
 bundle_widevine_cdm = false     # [SLIP] was true — component updater fetches CDM at runtime
-enable_cdm_storage_id = true
+enable_cdm_storage_id = false   # [SLIP] was true -- REQUIRES enable_rlz on Win/Mac
+                                # (cdm_storage_id.cc: #error "RLZ must be enabled").
+                                # We compile RLZ out (privacy), so disable the CDM
+                                # storage ID. Widevine L3 playback is unaffected;
+                                # forks can't use L1 / the storage-ID robustness path.
 enable_media_drm_storage = true
 enable_rlz = false              # [SLIP] was true — compile out Google install-attribution
 enable_hangout_services_extension = false
