@@ -20,6 +20,16 @@ patches/90-windows-exe-output-name.patch
 # the one authoritative literal so all three sides agree.
 patches/90-internal-url-scheme.patch
 
+# Slipstream default theme: dark mode + 'stream' blue (#2F7DFF) palette seed +
+# neutral color variant (gray/black surfaces, blue accents). Prefs-level, so
+# users can change any of it in Settings. (chrome/browser/themes/theme_service.cc)
+patches/90-slipstream-default-theme.patch
+
+# Memory Saver ON by default (MEM-01): idle background tabs are discarded,
+# freeing whole renderer processes. Chrome ships this OFF and enables it via
+# Finch, which forks never receive -- so the code default is the only default.
+patches/90-memory-saver-default.patch
+
 # v0.0: first gate was the stock Thorium build (passed).
 #
 # v0.1 plan (docs/PILLARS.md sections C+D — add ONE at a time, green rebuild
